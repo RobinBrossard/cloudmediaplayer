@@ -2,6 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- 允许联网 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -12,15 +15,38 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.CloudMediaPlayer"
         tools:targetApi="31">
+
+        <!-- MSAL 配置 -->
+        <meta-data
+            android:name="com.microsoft.identity.client.ClientId"
+            android:value="0471b3bd-df69-4b3f-94a8-9c9795605a7b"/>
+        <meta-data
+            android:name="com.microsoft.identity.client.RedirectUri"
+            android:value="msal0471b3bd-df69-4b3f-94a8-9c9795605a7b://auth"/>
+
+        <!-- MSAL BrowserTabActivity -->
+        <activity
+            android:name="com.microsoft.identity.client.BrowserTabActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <!-- scheme/host 要和 msal_config.json 里的 redirect_uri 保持一致 -->
+                <data
+                    android:scheme="msal0471b3bd-df69-4b3f-94a8-9c9795605a7b"
+                    android:host="auth"/>
+            </intent-filter>
+        </activity>
+
+        <!-- 你的主 Activity -->
         <activity
             android:name=".MainActivity"
             android:exported="true">
             <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-
-                <category android:name="android.intent.category.LAUNCHER" />
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
     </application>
-
 </manifest>
