@@ -4,11 +4,11 @@ plugins {
 
 android {
     namespace 'com.robinsoft.cloudmediaplayer'
-    compileSdk 35
+    compileSdk 36
 
     defaultConfig {
         applicationId "com.robinsoft.cloudmediaplayer"
-        minSdk 26
+        minSdk 25
         targetSdk 35
         versionCode 1
         versionName "1.0"
@@ -16,9 +16,17 @@ android {
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    compileOptions {
+        // Java 8 语言特性（包括 MethodHandle、Stream、java.time 等）
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+
+        // 打开核心库降级，让 D8 能在 minSdk 25 上支持 Java 8 API
+        coreLibraryDesugaringEnabled true
+    }
+
     packagingOptions {
         resources {
-            // 把所有冲突的 META-INF 文件都用 pickFirst 保留一个副本
             pickFirst 'META-INF/AL2.0'
             pickFirst 'META-INF/LGPL2.1'
             pickFirst 'META-INF/INDEX.LIST'
@@ -29,40 +37,37 @@ android {
     buildTypes {
         release {
             minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),
+                    'proguard-rules.pro'
         }
-    }
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_11
-        targetCompatibility JavaVersion.VERSION_11
     }
 }
 
 dependencies {
-
+    // AndroidX
     implementation libs.appcompat
     implementation libs.material
     implementation libs.activity
     implementation libs.constraintlayout
-    // Media3 的 ExoPlayer 实现
+
+    // Media3 ExoPlayer
     implementation "androidx.media3:media3-exoplayer:1.1.1"
-    // Media3 的 UI 控件
     implementation "androidx.media3:media3-ui:1.1.1"
 
-    testImplementation libs.junit
-    androidTestImplementation libs.ext.junit
-    androidTestImplementation libs.espresso.core
-
-    // MSAL for Android 登录库
+    // MSAL 登录库
     implementation("com.microsoft.identity.client:msal:5.8.2") {
-        // 排除 com.microsoft.device.display:display-mask
         exclude group: "com.microsoft.device.display"
     }
 
+    // OkHttp + Gson，取代 Graph/Azure SDK
+    implementation "com.squareup.okhttp3:okhttp:4.12.0"
+    implementation "com.google.code.gson:gson:2.10.1"
 
+    // 核心库降级实现
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"
 
-// Microsoft Graph SDK，用于访问 OneDrive
-    implementation 'com.microsoft.graph:microsoft-graph:5.8.0'
-    implementation 'com.azure:azure-identity:1.9.1'
-
+    // 测试
+    testImplementation libs.junit
+    androidTestImplementation libs.ext.junit
+    androidTestImplementation libs.espresso.core
 }

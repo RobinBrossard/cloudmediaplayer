@@ -12,17 +12,20 @@ import com.microsoft.identity.client.PublicClientApplication;
 import com.microsoft.identity.client.AuthenticationCallback;
 import com.microsoft.identity.client.exception.MsalException;
 
-import com.microsoft.graph.requests.GraphServiceClient;
-import com.microsoft.graph.models.DriveItem;
-import com.microsoft.graph.requests.DriveItemCollectionPage;
-import com.microsoft.graph.authentication.IAuthenticationProvider;
-
 import com.robinsoft.cloudmediaplayer.R;
 
-import java.net.URL;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
+
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 
 public class OneDriveMediaService implements CloudMediaService {
     private final MutableLiveData<List<CloudMediaItem>> mediaLiveData = new MutableLiveData<>();
@@ -70,42 +73,56 @@ public class OneDriveMediaService implements CloudMediaService {
     @Override
     public LiveData<List<CloudMediaItem>> listMedia(String folderPath) {
         new Thread(() -> {
+            List<CloudMediaItem> list = new ArrayList<>();
             try {
-                // 用新的 IAuthenticationProvider 实现
-                IAuthenticationProvider authProvider = new IAuthenticationProvider() {
-                    @Override
-                    public CompletableFuture<String> getAuthorizationTokenAsync(URL requestUrl) {
-                        // 直接返回已经获取到的 accessToken
-                        return CompletableFuture.completedFuture(accessToken);
+                // 构造 REST 请求 URL
+                String url = "https://graph.microsoft.com/v1.0/me/drive/root:" +
+                        folderPath +
+                        ":/children";
+
+                OkHttpClient client = new OkHttpClient();
+                Request request = new Request.Builder()
+                        .url(url)
+                        .addHeader("Authorization", "Bearer " + accessToken)
+                        .build();
+
+                Response response = client.newCall(request).execute();
+                if (!response.isSuccessful()) {
+                    throw new IOException("Unexpected code " + response);
+                }
+
+                // 解析 JSON
+                String json = response.body().string();
+                JsonObject root = new Gson().fromJson(json, JsonObject.class);
+                JsonArray items = root.getAsJsonArray("value");
+
+                for (JsonElement elem : items) {
+                    JsonObject obj = elem.getAsJsonObject();
+                    String id = obj.get("id").getAsString();
+                    String name = obj.get("name").getAsString();
+                    String webUrl = obj.get("webUrl").getAsString();
+
+                    boolean isVideo = false;
+                    if (obj.has("file") && obj.get("file").isJsonObject()) {
+                        JsonObject fileObj = obj.getAsJsonObject("file");
+                        if (fileObj.has("mimeType")) {
+                            String mime = fileObj.get("mimeType").getAsString();
+                            isVideo = mime.startsWith("video");
+                        }
                     }
-                };
 
-                GraphServiceClient<?> graphClient = GraphServiceClient
-                        .builder()
-                        .authenticationProvider(authProvider)
-                        .buildClient();
-
-                DriveItemCollectionPage page = graphClient
-                        .me()
-                        .drive()
-                        .root()
-                        .itemWithPath(folderPath)
-                        .children()
-                        .buildRequest()
-                        .get();
-
-                List<CloudMediaItem> list = new ArrayList<>();
-                for (DriveItem item : page.getCurrentPage()) {
-                    boolean isVideo = item.file != null && item.file.mimeType.startsWith("video");
                     list.add(new CloudMediaItem(
-                            item.id,
-                            item.name,
-                            item.webUrl,
-                            isVideo ? CloudMediaItem.MediaType.VIDEO : CloudMediaItem.MediaType.IMAGE
+                            id,
+                            name,
+                            webUrl,
+                            isVideo ? CloudMediaItem.MediaType.VIDEO
+                                    : CloudMediaItem.MediaType.IMAGE
                     ));
                 }
+
                 mediaLiveData.postValue(list);
             } catch (Exception e) {
+                e.printStackTrace();
                 mediaLiveData.postValue(null);
             }
         }).start();
