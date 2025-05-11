@@ -5,13 +5,13 @@ import android.app.Activity;
 import androidx.lifecycle.LiveData;
 import androidx.lifecycle.MutableLiveData;
 
-import com.microsoft.identity.client.IPublicClientApplication;
+import com.google.gson.JsonParser;
 import com.microsoft.identity.client.IAuthenticationResult;
 import com.microsoft.identity.client.ISingleAccountPublicClientApplication;
+import com.microsoft.identity.client.IPublicClientApplication;
 import com.microsoft.identity.client.PublicClientApplication;
 import com.microsoft.identity.client.AuthenticationCallback;
 import com.microsoft.identity.client.exception.MsalException;
-
 import com.robinsoft.cloudmediaplayer.R;
 
 import java.io.IOException;
@@ -41,9 +41,9 @@ public class OneDriveMediaService implements CloudMediaService {
                     @Override
                     public void onCreated(ISingleAccountPublicClientApplication application) {
                         msalApp = application;
-                        msalApp.signIn(
+                        // 使用新版 acquireToken API 登录
+                        msalApp.acquireToken(
                                 activity,
-                                null,
                                 new String[]{"Files.Read"},
                                 new AuthenticationCallback() {
                                     @Override
@@ -64,22 +64,33 @@ public class OneDriveMediaService implements CloudMediaService {
                     }
                     @Override
                     public void onError(MsalException exception) {
+                        // 创建 MSAL 实例失败
                         callback.onError(exception);
                     }
                 }
         );
     }
-
     @Override
     public LiveData<List<CloudMediaItem>> listMedia(String folderPath) {
         new Thread(() -> {
             List<CloudMediaItem> list = new ArrayList<>();
             try {
-                // 构造 REST 请求 URL
-                String url = "https://graph.microsoft.com/v1.0/me/drive/root:" +
-                        folderPath +
-                        ":/children";
+                // --- 1）选择正确的 URL ---
+                String url;
+                if (folderPath == null || folderPath.trim().isEmpty() || "/".equals(folderPath)) {
+                    // 根目录
+                    url = "https://graph.microsoft.com/v1.0/me/drive/root/children";
+                } else {
+                    // 子目录：剔除开头的斜杠，拼成 root:/path:/children
+                    String path = folderPath.startsWith("/")
+                            ? folderPath.substring(1)
+                            : folderPath;
+                    url = "https://graph.microsoft.com/v1.0/me/drive/root:/"
+                            + path
+                            + ":/children";
+                }
 
+                // --- 2）发请求 ---
                 OkHttpClient client = new OkHttpClient();
                 Request request = new Request.Builder()
                         .url(url)
@@ -91,41 +102,54 @@ public class OneDriveMediaService implements CloudMediaService {
                     throw new IOException("Unexpected code " + response);
                 }
 
-                // 解析 JSON
-                String json = response.body().string();
-                JsonObject root = new Gson().fromJson(json, JsonObject.class);
-                JsonArray items = root.getAsJsonArray("value");
+                // --- 3）解析返回的 JSON 并分类 ---
+                JsonArray items = JsonParser
+                        .parseString(response.body().string())
+                        .getAsJsonObject()
+                        .getAsJsonArray("value");
 
-                for (JsonElement elem : items) {
-                    JsonObject obj = elem.getAsJsonObject();
-                    String id = obj.get("id").getAsString();
+                for (JsonElement e : items) {
+                    JsonObject obj = e.getAsJsonObject();
+                    String id   = obj.get("id").getAsString();
                     String name = obj.get("name").getAsString();
                     String webUrl = obj.get("webUrl").getAsString();
 
-                    boolean isVideo = false;
-                    if (obj.has("file") && obj.get("file").isJsonObject()) {
-                        JsonObject fileObj = obj.getAsJsonObject("file");
-                        if (fileObj.has("mimeType")) {
-                            String mime = fileObj.get("mimeType").getAsString();
-                            isVideo = mime.startsWith("video");
-                        }
+                    // 目录
+                    if (obj.has("folder")) {
+                        list.add(new CloudMediaItem(id, name, webUrl, CloudMediaItem.MediaType.FOLDER));
+                        continue;
                     }
-
-                    list.add(new CloudMediaItem(
-                            id,
-                            name,
-                            webUrl,
-                            isVideo ? CloudMediaItem.MediaType.VIDEO
-                                    : CloudMediaItem.MediaType.IMAGE
-                    ));
+                    // 快捷方式
+                    if (obj.has("remoteItem")) {
+                        list.add(new CloudMediaItem(id, name, webUrl, CloudMediaItem.MediaType.FILE));
+                        continue;
+                    }
+                    // 普通文件：按 mimeType 判断
+                    if (obj.has("file")) {
+                        String mime = obj.getAsJsonObject("file")
+                                .get("mimeType")
+                                .getAsString();
+                        if (mime.startsWith("image/")) {
+                            list.add(new CloudMediaItem(id, name, webUrl, CloudMediaItem.MediaType.IMAGE));
+                        } else if (mime.startsWith("video/")) {
+                            list.add(new CloudMediaItem(id, name, webUrl, CloudMediaItem.MediaType.VIDEO));
+                        } else {
+                            list.add(new CloudMediaItem(id, name, webUrl, CloudMediaItem.MediaType.FILE));
+                        }
+                        continue;
+                    }
+                    // 兜底
+                    list.add(new CloudMediaItem(id, name, webUrl, CloudMediaItem.MediaType.FILE));
                 }
 
                 mediaLiveData.postValue(list);
-            } catch (Exception e) {
-                e.printStackTrace();
+            } catch (Exception ex) {
+                ex.printStackTrace();
                 mediaLiveData.postValue(null);
             }
         }).start();
         return mediaLiveData;
     }
+
+
 }

@@ -18,7 +18,11 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:layout_marginTop="8dp" />
+        android:layout_marginTop="8dp"
+        android:scrollbars="vertical"
+        android:overScrollMode="always"
+        android:fadeScrollbars="false"
+    />
 
     <!-- 播放区 -->
     <androidx.media3.ui.PlayerView

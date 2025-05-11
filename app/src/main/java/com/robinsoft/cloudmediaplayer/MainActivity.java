@@ -1,105 +1,79 @@
 package com.robinsoft.cloudmediaplayer;
 
 import android.os.Bundle;
-import android.util.Log;
 import android.widget.Button;
-import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.lifecycle.ViewModelProvider;
-import androidx.media3.common.MediaItem;
-import androidx.media3.exoplayer.ExoPlayer;
-import androidx.media3.ui.PlayerView;
+import androidx.lifecycle.Observer;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import com.robinsoft.cloudmediaplayer.adapter.MediaAdapter;
+import androidx.media3.common.MediaItem;
+import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.ui.PlayerView;
+
+import com.robinsoft.cloudmediaplayer.adapter.CloudMediaAdapter;
+import com.robinsoft.cloudmediaplayer.cloud.CloudMediaItem;
 import com.robinsoft.cloudmediaplayer.cloud.CloudMediaService;
-import com.robinsoft.cloudmediaplayer.ui.MediaViewModel;
+import com.robinsoft.cloudmediaplayer.cloud.OneDriveMediaService;
+
+import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
     private ExoPlayer player;
     private PlayerView playerView;
-    private MediaViewModel viewModel;
-    private Button btnLogin;
+    private RecyclerView recyclerView;
+    private CloudMediaService mediaService = new OneDriveMediaService();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        // 找控件
-        btnLogin = findViewById(R.id.btnLogin);
+        Button btnLogin = findViewById(R.id.btnLogin);
+        recyclerView = findViewById(R.id.recyclerView);
         playerView = findViewById(R.id.playerView);
-        RecyclerView rv = findViewById(R.id.recyclerView);
 
-        // ExoPlayer 初始化
+        // 初始化 ExoPlayer
         player = new ExoPlayer.Builder(this).build();
         playerView.setPlayer(player);
 
-        // RecyclerView
-        rv.setLayoutManager(new LinearLayoutManager(this));
-        MediaAdapter adapter = new MediaAdapter(item -> playUrl(item.getDownloadUrl()));
-        rv.setAdapter(adapter);
+        // RecyclerView + Adapter
+        CloudMediaAdapter adapter = new CloudMediaAdapter();
+        recyclerView.setLayoutManager(new LinearLayoutManager(this));
+        recyclerView.setAdapter(adapter);
 
-        // ViewModel
-        viewModel = new ViewModelProvider(this).get(MediaViewModel.class);
-
-// 登录按钮
+        // 登录并加载根目录媒体
         btnLogin.setOnClickListener(v -> {
-            // 验证点击事件是否生效
-            Toast.makeText(this, "点击被捕捉到", Toast.LENGTH_SHORT).show();
-            Log.d("MainActivity", "登录按钮被点击");
-
-            viewModel.authenticate(MainActivity.this,new CloudMediaService.AuthCallback() {
+            mediaService.authenticate(this, new CloudMediaService.AuthCallback() {
                 @Override
                 public void onSuccess() {
-                    runOnUiThread(() ->
-                            Toast.makeText(MainActivity.this, "登录成功", Toast.LENGTH_SHORT).show()
-                    );
-                    viewModel.getMediaList("/drive/root:/Videos")
-                            .observe(MainActivity.this, list -> {
-                                if (list != null && !list.isEmpty()) {
-                                    adapter.setData(list);
-                                } else {
-                                    Toast.makeText(MainActivity.this,
-                                            "没有找到任何文件", Toast.LENGTH_SHORT).show();
+                    mediaService.listMedia("/")  // 取根目录
+                            .observe(MainActivity.this, new Observer<List<CloudMediaItem>>() {
+                                @Override
+                                public void onChanged(List<CloudMediaItem> items) {
+                                    adapter.submitList(items);
                                 }
                             });
                 }
                 @Override
-                public void onError(Throwable t) {
-                    Log.e("MainActivity", "登录失败回调", t);
-                    runOnUiThread(() ->
-                            Toast.makeText(MainActivity.this,
-                                    "登录失败: " + t.getMessage(), Toast.LENGTH_LONG).show()
-                    );
+                public void onError(Throwable error) {
+                    // TODO: 登录失败处理（Toast、日志等）
                 }
             });
         });
 
-    }
-
-    private void playUrl(String url) {
-        if (player == null) return;
-        player.setMediaItem(MediaItem.fromUri(url));
-        player.prepare();
-        player.play();
-    }
-
-    @Override
-    protected void onPause() {
-        super.onPause();
-        if (player != null) player.pause();
+        // 列表点击播放
+        adapter.setOnItemClickListener(item -> {
+            player.setMediaItem(MediaItem.fromUri(item.getUrl()));
+            player.prepare();
+            player.play();
+        });
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        if (player != null) {
-            player.release();
-            player = null;
-        }
+        player.release();
     }
 }
-
