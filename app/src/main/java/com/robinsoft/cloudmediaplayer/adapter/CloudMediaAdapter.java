@@ -36,7 +36,7 @@ public class CloudMediaAdapter
                                                   @NonNull CloudMediaItem newItem) {
                     return oldItem.getName().equals(newItem.getName())
                             && oldItem.getUrl().equals(newItem.getUrl())
-                            && oldItem.getType() == newItem.getType();
+                            && oldItem.getType().equals(newItem.getType());
                 }
             };
 
