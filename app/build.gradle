@@ -51,21 +51,22 @@ dependencies {
     implementation libs.constraintlayout
 
     // MSAL 登录库
-    implementation("com.microsoft.identity.client:msal:5.8.2") {
+    implementation(libs.msal) {
         exclude group: "com.microsoft.device.display"
     }
 
     // OkHttp + Gson，取代 Graph/Azure SDK
-    implementation "com.squareup.okhttp3:okhttp:4.12.0"
-    implementation "com.google.code.gson:gson:2.10.1"
+    implementation libs.okhttp
+    implementation libs.gson
 
     // 核心库降级实现
-    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"
+    coreLibraryDesugaring libs.desugar.jdk.libs
 
     //视频处理
-    implementation "com.google.android.exoplayer:exoplayer:2.19.1"
+    implementation libs.exoplayer
 
-
+    // Material 组件库（包含 BottomNavigationView）
+    implementation libs.material.v1120
 
     // 测试
     testImplementation libs.junit
