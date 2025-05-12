@@ -63,7 +63,9 @@ dependencies {
     coreLibraryDesugaring libs.desugar.jdk.libs
 
     //视频处理
-    implementation libs.exoplayer
+    //implementation libs.exoplayer
+    implementation libs.media3.exoplayer
+    implementation libs.media3.ui
 
     // Material 组件库（包含 BottomNavigationView）
     implementation libs.material.v1120

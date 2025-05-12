@@ -24,8 +24,8 @@ import androidx.fragment.app.Fragment;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import com.google.android.exoplayer2.ExoPlayer;
-import com.google.android.exoplayer2.MediaItem;
+import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.common.MediaItem;
 import com.robinsoft.cloudmediaplayer.R;
 import com.robinsoft.cloudmediaplayer.adapter.CloudMediaAdapter;
 import com.robinsoft.cloudmediaplayer.cloud.CloudMediaService;
