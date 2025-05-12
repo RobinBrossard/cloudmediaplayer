@@ -31,10 +31,12 @@ public class CloudMediaAdapter
                     return oldItem.getId().equals(newItem.getId());
                 }
                 @Override
+                @SuppressWarnings("SuspiciousEquality")
                 public boolean areContentsTheSame(@NonNull CloudMediaItem oldItem,
                                                   @NonNull CloudMediaItem newItem) {
                     return oldItem.getName().equals(newItem.getName())
-                            && oldItem.getUrl().equals(newItem.getUrl());
+                            && oldItem.getUrl().equals(newItem.getUrl())
+                            && oldItem.getType() == newItem.getType();
                 }
             };
 
@@ -48,7 +50,7 @@ public class CloudMediaAdapter
     }
 
     @Override
-    public void onBindViewHolder(ViewHolder holder, int pos) {
+    public void onBindViewHolder(@NonNull ViewHolder holder, int pos) {
         CloudMediaItem item = getItem(pos);
         holder.tvName.setText(item.getName());
         // … 如果需要缩略图可在这里加载 ivThumbnail …
@@ -62,12 +64,25 @@ public class CloudMediaAdapter
             default:     label = "";     break;
         }
         holder.tvType.setText(label);
+
+        // —— 添加点击回调 ——
+        holder.itemView.setOnClickListener(v -> {
+            if (listener != null) {
+                listener.onItemClick(item);
+            }
+        });
     }
 
+    /**
+     * 设置点击回调
+     */
     public void setOnItemClickListener(OnItemClickListener l) {
         this.listener = l;
     }
 
+    /**
+     * 点击事件接口
+     */
     public interface OnItemClickListener {
         void onItemClick(CloudMediaItem item);
     }

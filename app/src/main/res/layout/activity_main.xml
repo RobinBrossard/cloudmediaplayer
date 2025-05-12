@@ -21,13 +21,21 @@
         android:layout_marginTop="8dp"
         android:scrollbars="vertical"
         android:overScrollMode="always"
-        android:fadeScrollbars="false"
-    />
+        android:fadeScrollbars="false"/>
 
-    <!-- 播放区 -->
-    <androidx.media3.ui.PlayerView
-        android:id="@+id/playerView"
+    <!-- 播放区（改为原生 TextureView） -->
+    <TextureView
+        android:id="@+id/texture_view"
+        android:layout_width="match_parent"
+        android:layout_height="200dp"/>
+
+    <!-- 静态图片展示 -->
+    <ImageView
+        android:id="@+id/imageView"
         android:layout_width="match_parent"
         android:layout_height="200dp"
-        android:layout_marginTop="8dp"/>
+        android:layout_marginTop="8dp"
+        android:visibility="gone"
+        android:scaleType="fitCenter"/>
+
 </LinearLayout>

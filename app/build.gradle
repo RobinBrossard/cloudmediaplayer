@@ -50,10 +50,6 @@ dependencies {
     implementation libs.activity
     implementation libs.constraintlayout
 
-    // Media3 ExoPlayer
-    implementation "androidx.media3:media3-exoplayer:1.1.1"
-    implementation "androidx.media3:media3-ui:1.1.1"
-
     // MSAL 登录库
     implementation("com.microsoft.identity.client:msal:5.8.2") {
         exclude group: "com.microsoft.device.display"
@@ -65,6 +61,11 @@ dependencies {
 
     // 核心库降级实现
     coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"
+
+    //视频处理
+    implementation "com.google.android.exoplayer:exoplayer:2.19.1"
+
+
 
     // 测试
     testImplementation libs.junit

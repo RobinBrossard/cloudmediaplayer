@@ -1,6 +1,6 @@
 {
   "client_id" : "0471b3bd-df69-4b3f-94a8-9c9795605a7b",
-  "authorization_user_agent" : "DEFAULT",
+  "authorization_user_agent" : "WEBVIEW",
   "redirect_uri" : "msal0471b3bd-df69-4b3f-94a8-9c9795605a7b://auth",
   "account_mode" : "SINGLE"
 }
