@@ -43,6 +43,9 @@ android {
     }
 }
 
+// Top of file, pick one version variable:
+def media3_version = "1.5.0"
+
 dependencies {
     // AndroidX
     implementation libs.appcompat
@@ -63,9 +66,15 @@ dependencies {
     coreLibraryDesugaring libs.desugar.jdk.libs
 
     //视频处理
-    //implementation libs.exoplayer
-    implementation libs.media3.exoplayer
-    implementation libs.media3.ui
+    // Media3 “core” decoder module (required by the FFmpeg extension’s POM)
+    implementation "androidx.media3:media3-decoder:${media3_version}"
+    // ExoPlayer engine
+    implementation "androidx.media3:media3-exoplayer:${media3_version}"
+    // UI components (PlayerView, etc.)
+    implementation "androidx.media3:media3-ui:${media3_version}"
+
+    // Jellyfin’s FFmpeg decoder extension, must match 1.5.0
+    implementation "org.jellyfin.media3:media3-ffmpeg-decoder:${media3_version}+1"
 
     // Material 组件库（包含 BottomNavigationView）
     implementation libs.material.v1120
