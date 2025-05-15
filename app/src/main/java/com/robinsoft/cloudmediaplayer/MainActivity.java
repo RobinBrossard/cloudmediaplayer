@@ -1,7 +1,9 @@
 package com.robinsoft.cloudmediaplayer;
 
+import android.content.res.Configuration;
 import android.os.Bundle;
 
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.fragment.app.FragmentTransaction;
 import androidx.media3.common.util.UnstableApi;
@@ -65,5 +67,12 @@ public class MainActivity extends AppCompatActivity {
             txn.commit();
             return true;
         });
+    }
+
+    @Override
+    public void onConfigurationChanged(@NonNull Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        // 如果你需要对播放器或其他 UI 做特殊处理，
+        // 可以在这里根据 newConfig.orientation 来适配。
     }
 }

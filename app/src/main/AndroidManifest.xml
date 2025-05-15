@@ -3,7 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!-- 1. 网络权限：用于调用 OneDrive API -->
-    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:allowBackup="true"
@@ -17,29 +17,30 @@
         tools:targetApi="31">
 
 
-
         <!-- 3. MSAL 返回页：接收系统浏览器或内置浏览器重定向 -->
         <activity
             android:name="com.microsoft.identity.client.BrowserTabActivity"
             android:exported="true">
             <intent-filter>
-                <action android:name="android.intent.action.VIEW"/>
-                <category android:name="android.intent.category.DEFAULT"/>
-                <category android:name="android.intent.category.BROWSABLE"/>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
                 <!-- 必须和 RedirectUri 一致 -->
                 <data
-                    android:scheme="msal0471b3bd-df69-4b3f-94a8-9c9795605a7b"
-                    android:host="auth"/>
+                    android:host="auth"
+                    android:scheme="msal0471b3bd-df69-4b3f-94a8-9c9795605a7b" />
             </intent-filter>
         </activity>
 
         <!-- 4. 你的主入口 Activity -->
         <activity
             android:name=".MainActivity"
+            android:configChanges="orientation|screenSize"
             android:exported="true">
             <intent-filter>
-                <action android:name="android.intent.action.MAIN"/>
-                <category android:name="android.intent.category.LAUNCHER"/>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
     </application>

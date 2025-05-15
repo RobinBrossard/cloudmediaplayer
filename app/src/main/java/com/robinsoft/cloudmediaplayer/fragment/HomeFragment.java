@@ -3,23 +3,25 @@ package com.robinsoft.cloudmediaplayer.fragment;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.SurfaceTexture;
-import android.media.AudioAttributes;
-import android.media.MediaPlayer;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.Gravity;
 import android.view.LayoutInflater;
-import android.view.Surface;
-import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
+import android.widget.SeekBar;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.constraintlayout.widget.ConstraintLayout;
 import androidx.fragment.app.Fragment;
 import androidx.media3.common.Format;
 import androidx.media3.common.MediaItem;
@@ -31,15 +33,12 @@ import androidx.media3.exoplayer.DecoderReuseEvaluation;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.analytics.AnalyticsListener;
-import androidx.media3.exoplayer.mediacodec.MediaCodecInfo;
-import androidx.media3.exoplayer.mediacodec.MediaCodecSelector;
-import androidx.media3.exoplayer.mediacodec.MediaCodecUtil;
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
 import androidx.media3.exoplayer.trackselection.MappingTrackSelector;
+import androidx.media3.ui.PlayerView;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import com.google.common.collect.ImmutableList;
 import com.robinsoft.cloudmediaplayer.R;
 import com.robinsoft.cloudmediaplayer.adapter.CloudMediaAdapter;
 import com.robinsoft.cloudmediaplayer.cloud.CloudMediaService;
@@ -47,21 +46,20 @@ import com.robinsoft.cloudmediaplayer.cloud.OneDriveMediaService;
 
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.util.List;
 
 @UnstableApi
-public class HomeFragment extends Fragment implements TextureView.SurfaceTextureListener {
+public class HomeFragment extends Fragment {
 
     private static final String TAG = "MP_PLAYBACK";
     private final CloudMediaService mediaService = new OneDriveMediaService();
     private DefaultTrackSelector trackSelector;
     private ExoPlayer exoPlayer;
-    private MediaPlayer mediaPlayer;
-    private boolean isSurfaceReady = false;
-    private TextureView textureView;
+    private PlayerView playerView;
+    private SeekBar volumeSeekBar;
     private ImageView imageView;
     private RecyclerView recyclerView;
     private Button btnLogin, btnRoot;
+    private boolean isFullscreen = false;
 
     @Nullable
     @Override
@@ -78,35 +76,12 @@ public class HomeFragment extends Fragment implements TextureView.SurfaceTexture
         btnLogin = view.findViewById(R.id.btnLogin);
         btnRoot = view.findViewById(R.id.btnRoot);
         recyclerView = view.findViewById(R.id.recyclerView);
-        textureView = view.findViewById(R.id.texture_view);
         imageView = view.findViewById(R.id.imageView);
+        playerView = view.findViewById(R.id.player_view);
+        volumeSeekBar = view.findViewById(R.id.volume_seekbar);
 
-        textureView.setSurfaceTextureListener(this);
-
-        // TrackSelector
+        // TrackSelector & ExoPlayer 初始化
         trackSelector = new DefaultTrackSelector(requireContext());
-
-        // 只用软件解码器的 MediaCodecSelector
-        MediaCodecSelector softwareOnlySelector = new MediaCodecSelector() {
-            @Override
-            public ImmutableList<MediaCodecInfo> getDecoderInfos(String mimeType, boolean requiresSecureDecoder, boolean requiresTunnelingDecoder) {
-                List<MediaCodecInfo> all;
-                try {
-                    all = MediaCodecSelector.DEFAULT.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder);
-                } catch (MediaCodecUtil.DecoderQueryException e) {
-                    Log.e(TAG, "DecoderQueryException 查询解码器列表失败", e);
-                    return ImmutableList.of();
-                }
-                ImmutableList.Builder<MediaCodecInfo> software = ImmutableList.builder();
-                for (MediaCodecInfo info : all) {
-                    if (info.softwareOnly) {
-                        software.add(info);
-                    }
-                }
-                return software.build();
-            }
-        };
-
 
         //优选编码
         DefaultRenderersFactory renderersFactory =
@@ -195,7 +170,10 @@ public class HomeFragment extends Fragment implements TextureView.SurfaceTexture
             }
 
             private void appendLog(String s) {
-                TestFragment logFrag = (TestFragment) requireActivity().getSupportFragmentManager().findFragmentByTag("test_fr");
+                if (!isAdded() || getActivity() == null) return;
+                TestFragment logFrag = (TestFragment)
+                        getActivity().getSupportFragmentManager().findFragmentByTag("test_fr");
+                //requireActivity().getSupportFragmentManager().findFragmentByTag("test_fr");
                 if (logFrag != null) {
                     String ts = logFrag.getTimestamp();
                     logFrag.appendLog(ts + s);
@@ -204,8 +182,29 @@ public class HomeFragment extends Fragment implements TextureView.SurfaceTexture
             }
         });
 
-        exoPlayer.setVideoTextureView(textureView);
-        isSurfaceReady = true;
+        // 3. 给 PlayerView 设置 player
+        playerView.setPlayer(exoPlayer);
+        playerView.setControllerShowTimeoutMs(1000);
+        //playerView.showController();
+        // 点击退出全屏
+        playerView.setOnClickListener(v -> toggleFullscreen());
+
+        // 4. （可选）音量滑杆监听
+        volumeSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
+                exoPlayer.setVolume(progress / 100f);
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar sb) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar sb) {
+            }
+        });
+
 
         // RecyclerView
         CloudMediaAdapter adapter = new CloudMediaAdapter();
@@ -216,9 +215,9 @@ public class HomeFragment extends Fragment implements TextureView.SurfaceTexture
         btnLogin.setOnClickListener(v -> mediaService.authenticate(requireActivity(), new CloudMediaService.AuthCallback() {
             @Override
             public void onSuccess() {
-                mediaService.listMedia("/").observe(getViewLifecycleOwner(), items -> {
+                mediaService.listMedia(null).observe(getViewLifecycleOwner(), items -> {
                     adapter.submitList(items);
-                    textureView.setVisibility(View.GONE);
+                    playerView.setVisibility(View.GONE);
                     imageView.setVisibility(View.GONE);
                 });
             }
@@ -229,40 +228,37 @@ public class HomeFragment extends Fragment implements TextureView.SurfaceTexture
             }
         }));
         // 回根目录
-        btnRoot.setOnClickListener(v -> mediaService.listMedia("/").observe(getViewLifecycleOwner(), adapter::submitList));
+        btnRoot.setOnClickListener(v -> mediaService.listMedia(null)
+                .observe(getViewLifecycleOwner(), adapter::submitList));
+
         // 列表点击
         adapter.setOnItemClickListener(item -> {
             switch (item.getType()) {
                 case IMAGE:
                     exoPlayer.pause();
-                    stopMediaPlayer();
-                    textureView.setVisibility(View.GONE);
+                    playerView.setVisibility(View.GONE);
                     imageView.setVisibility(View.VISIBLE);
                     loadImageAsync(item.getUrl());
+                    enterFullscreen();
+                    imageView.setOnClickListener(v -> toggleFullscreen());
                     break;
                 case VIDEO:
                     imageView.setVisibility(View.GONE);
-                    textureView.setVisibility(View.VISIBLE);
-                    if (!isSurfaceReady) {
-                        Toast.makeText(requireContext(), "视频加载中，请稍候…", Toast.LENGTH_SHORT).show();
-                        return;
-                    }
-                    stopMediaPlayer();
+                    playerView.setVisibility(View.VISIBLE);
                     String url = item.getUrl();
-                    if (url.contains("1drv.com")) {
+                    if (url.contains("1drv.com"))
                         url += (url.contains("?") ? "&" : "?") + "download=1";
-                    }
-                    Log.d(TAG, "Exo 播放直链: " + url);
+                    //Log.d(TAG, "Exo 播放直链: " + url);
                     exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(url)));
                     exoPlayer.prepare();
                     exoPlayer.play();
+                    enterFullscreen();
                     break;
                 case FOLDER:
                     exoPlayer.pause();
-                    stopMediaPlayer();
-                    textureView.setVisibility(View.GONE);
+                    playerView.setVisibility(View.GONE);
                     imageView.setVisibility(View.GONE);
-                    mediaService.listMedia(item.getName()).observe(getViewLifecycleOwner(), adapter::submitList);
+                    mediaService.listMedia(item.getId()).observe(getViewLifecycleOwner(), adapter::submitList);
                     break;
                 default:
                     Toast.makeText(requireContext(), "无法播放该文件类型", Toast.LENGTH_SHORT).show();
@@ -270,51 +266,6 @@ public class HomeFragment extends Fragment implements TextureView.SurfaceTexture
         });
     }
 
-    // Helper: 停止 MediaPlayer
-    private void stopMediaPlayer() {
-        if (mediaPlayer != null && mediaPlayer.isPlaying()) {
-            mediaPlayer.stop();
-        }
-    }
-
-    // —— MediaPlayer & SurfaceTextureListener ——
-
-    @Override
-    public void onSurfaceTextureAvailable(@NonNull SurfaceTexture surface, int width, int height) {
-        mediaPlayer = new MediaPlayer();
-        mediaPlayer.setAudioAttributes(new AudioAttributes.Builder().setContentType(AudioAttributes.CONTENT_TYPE_MOVIE).setUsage(AudioAttributes.USAGE_MEDIA).build());
-        mediaPlayer.setSurface(new Surface(surface));
-        mediaPlayer.setOnErrorListener((mp, what, extra) -> {
-            Log.e(TAG, "onError: what=" + what + " extra=" + extra);
-            Toast.makeText(requireContext(), "视频播放错误 code=" + what, Toast.LENGTH_LONG).show();
-            return true;
-        });
-        mediaPlayer.setOnInfoListener((mp, what, extra) -> {
-            Log.d(TAG, "onInfo: what=" + what + " extra=" + extra);
-            return false;
-        });
-        mediaPlayer.setOnPreparedListener(MediaPlayer::start);
-        isSurfaceReady = true;
-    }
-
-    @Override
-    public void onSurfaceTextureSizeChanged(@NonNull SurfaceTexture s, int w, int h) {
-    }
-
-    @Override
-    public boolean onSurfaceTextureDestroyed(@NonNull SurfaceTexture s) {
-        if (mediaPlayer != null) {
-            if (mediaPlayer.isPlaying()) mediaPlayer.stop();
-            mediaPlayer.release();
-            mediaPlayer = null;
-        }
-        isSurfaceReady = false;
-        return true;
-    }
-
-    @Override
-    public void onSurfaceTextureUpdated(@NonNull SurfaceTexture s) {
-    }
 
     // —— 图片加载 ——
     private void loadImageAsync(String url) {
@@ -363,4 +314,114 @@ public class HomeFragment extends Fragment implements TextureView.SurfaceTexture
         }
         return inSampleSize;
     }
+
+    private void enterFullscreen() {
+        isFullscreen = true;
+        // 隐藏顶部列表区
+        View topContainer = requireActivity().findViewById(R.id.top_container);
+        if (topContainer != null) topContainer.setVisibility(View.GONE);
+
+        // 扩展下半区到底部全屏
+        ConstraintLayout.LayoutParams blp =
+                (ConstraintLayout.LayoutParams) requireActivity()
+                        .findViewById(R.id.bottom_container)
+                        .getLayoutParams();
+        // 取消顶部“连接到 guideline”
+        blp.topToTop = ConstraintLayout.LayoutParams.PARENT_ID;
+        blp.topToBottom = ConstraintLayout.LayoutParams.UNSET;
+        requireActivity().findViewById(R.id.bottom_container)
+                .setLayoutParams(blp);
+
+        // 隐藏系统 UI（StatusBar & Navigation）
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            requireActivity().getWindow().getInsetsController().hide(
+                    WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+            requireActivity().getWindow().getInsetsController()
+                    .setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+        } else {
+            requireActivity().getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_FULLSCREEN |
+                            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+                            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        }
+        // 隐藏其他控件
+        btnLogin.setVisibility(View.GONE);
+        btnRoot.setVisibility(View.GONE);
+        recyclerView.setVisibility(View.GONE);
+        // 隐藏底部导航/分页按钮（假设ID为 bottom_nav）
+        View bottomNav = requireActivity().findViewById(R.id.bottom_nav);
+        if (bottomNav != null) bottomNav.setVisibility(View.GONE);
+        // 将播放器View上下居中
+        if (playerView.getLayoutParams() instanceof FrameLayout.LayoutParams) {
+            FrameLayout.LayoutParams flp = (FrameLayout.LayoutParams) playerView.getLayoutParams();
+            flp.gravity = Gravity.CENTER;
+            playerView.setLayoutParams(flp);
+        }
+        if (isFullscreen) return;
+        isFullscreen = true;
+        // 隐藏系统 UI
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            requireActivity().getWindow().getInsetsController().hide(
+                    WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+            requireActivity().getWindow().getInsetsController()
+                    .setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+        } else {
+            View decor = requireActivity().getWindow().getDecorView();
+            int flags = View.SYSTEM_UI_FLAG_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+            decor.setSystemUiVisibility(flags);
+        }
+        // 隐藏其余 UI
+        btnLogin.setVisibility(View.GONE);
+        btnRoot.setVisibility(View.GONE);
+        recyclerView.setVisibility(View.GONE);
+    }
+
+    private void exitFullscreen() {
+        if (!isFullscreen) return;
+        isFullscreen = false;
+
+        // 恢复顶部列表区
+        View topContainer = requireActivity().findViewById(R.id.top_container);
+        if (topContainer != null) topContainer.setVisibility(View.VISIBLE);
+
+        // 恢复下半区原始约束
+        ConstraintLayout.LayoutParams blp =
+                (ConstraintLayout.LayoutParams) requireActivity()
+                        .findViewById(R.id.bottom_container)
+                        .getLayoutParams();
+        blp.topToTop = ConstraintLayout.LayoutParams.UNSET;
+        blp.topToBottom = R.id.guideline_half;
+        requireActivity().findViewById(R.id.bottom_container)
+                .setLayoutParams(blp);
+
+        // 恢复系统 UI
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            requireActivity().getWindow().getInsetsController().show(
+                    WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+        } else {
+            requireActivity().getWindow().getDecorView()
+                    .setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+        }
+        // 恢复其他 UI
+        btnLogin.setVisibility(View.VISIBLE);
+        btnRoot.setVisibility(View.VISIBLE);
+        recyclerView.setVisibility(View.VISIBLE);
+    }
+
+    private void toggleFullscreen() {
+        if (isFullscreen) exitFullscreen();
+        else enterFullscreen();
+    }
+
+    @Override
+    public void onDestroyView() {
+        super.onDestroyView();
+        if (exoPlayer != null) {
+            exoPlayer.release();
+            exoPlayer = null;
+        }
+    }
+
 }
