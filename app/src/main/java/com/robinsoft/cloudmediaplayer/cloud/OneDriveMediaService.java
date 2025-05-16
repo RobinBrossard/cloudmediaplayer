@@ -25,6 +25,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -149,7 +150,11 @@ public class OneDriveMediaService implements CloudMediaService {
      * @param folderId 根目录传 null 或空字符串
      */
     @Override
+
     public LiveData<List<CloudMediaItem>> listMedia(String folderId) {
+        // 假设 mediaLiveData 是在类中定义好的 MutableLiveData<List<CloudMediaItem>>
+        MutableLiveData<List<CloudMediaItem>> mediaLiveData = new MutableLiveData<>();
+
         new Thread(() -> {
             List<CloudMediaItem> list = new ArrayList<>();
             try {
@@ -157,7 +162,6 @@ public class OneDriveMediaService implements CloudMediaService {
                 if (folderId == null || folderId.trim().isEmpty()) {
                     url = "https://graph.microsoft.com/v1.0/me/drive/root/children";
                 } else {
-                    // 按 ID 获取指定文件夹下的子项
                     url = "https://graph.microsoft.com/v1.0/me/drive/items/" + folderId + "/children";
                 }
 
@@ -183,26 +187,39 @@ public class OneDriveMediaService implements CloudMediaService {
                             ? obj.get("@microsoft.graph.downloadUrl").getAsString()
                             : obj.get("webUrl").getAsString();
 
+                    CloudMediaItem.MediaType type;
                     if (obj.has("folder")) {
-                        list.add(new CloudMediaItem(id, name, downloadUrl, CloudMediaItem.MediaType.FOLDER));
+                        type = CloudMediaItem.MediaType.FOLDER;
                     } else if (obj.has("file")) {
-                        String mime = obj.getAsJsonObject("file").get("mimeType").getAsString();
-                        CloudMediaItem.MediaType type = mime.startsWith("image/")
-                                ? CloudMediaItem.MediaType.IMAGE
-                                : mime.startsWith("video/")
-                                ? CloudMediaItem.MediaType.VIDEO
-                                : CloudMediaItem.MediaType.FILE;
-                        list.add(new CloudMediaItem(id, name, downloadUrl, type));
+                        JsonObject fileObj = obj.getAsJsonObject("file");
+                        String mime = fileObj.get("mimeType").getAsString();
+                        String lowerName = name.toLowerCase(Locale.ROOT);
+
+                        if ("application/vnd.android.package-archive".equals(mime)
+                                || lowerName.endsWith(".apk")) {
+                            type = CloudMediaItem.MediaType.APK;
+                        } else if (mime.startsWith("image/")) {
+                            type = CloudMediaItem.MediaType.IMAGE;
+                        } else if (mime.startsWith("video/")) {
+                            type = CloudMediaItem.MediaType.VIDEO;
+                        } else {
+                            type = CloudMediaItem.MediaType.FILE;
+                        }
                     } else {
-                        list.add(new CloudMediaItem(id, name, downloadUrl, CloudMediaItem.MediaType.FILE));
+                        // 既不是文件也不是文件夹，归为普通文件
+                        type = CloudMediaItem.MediaType.FILE;
                     }
+
+                    list.add(new CloudMediaItem(id, name, downloadUrl, type));
                 }
+
                 mediaLiveData.postValue(list);
             } catch (Exception ex) {
                 ex.printStackTrace();
                 mediaLiveData.postValue(null);
             }
         }).start();
+
         return mediaLiveData;
     }
 }

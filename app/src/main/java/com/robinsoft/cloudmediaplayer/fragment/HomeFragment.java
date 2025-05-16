@@ -1,5 +1,7 @@
 package com.robinsoft.cloudmediaplayer.fragment;
 
+import android.app.Activity;
+import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -7,14 +9,13 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
-import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.widget.Button;
-import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.SeekBar;
 import android.widget.Toast;
@@ -58,8 +59,19 @@ public class HomeFragment extends Fragment {
     private SeekBar volumeSeekBar;
     private ImageView imageView;
     private RecyclerView recyclerView;
-    private Button btnLogin, btnRoot;
+    private Button btnLogin, btnRoot, btnGo;
     private boolean isFullscreen = false;
+
+    // 声明 ApkDownloader 成员变量
+    private ApkDownloader apkDownloader;
+
+    // 在 onAttach 中初始化 ApkDownloader，这是一个好时机，因为 Context 在此时可用
+    @Override
+    public void onAttach(@NonNull Context context) {
+        super.onAttach(context);
+        // 使用 context 初始化 ApkDownloader，它内部会获取 ApplicationContext
+        apkDownloader = new ApkDownloader(context);
+    }
 
     @Nullable
     @Override
@@ -75,30 +87,29 @@ public class HomeFragment extends Fragment {
         // UI 绑定
         btnLogin = view.findViewById(R.id.btnLogin);
         btnRoot = view.findViewById(R.id.btnRoot);
+        btnGo = view.findViewById(R.id.btnGo);
         recyclerView = view.findViewById(R.id.recyclerView);
         imageView = view.findViewById(R.id.imageView);
         playerView = view.findViewById(R.id.player_view);
         volumeSeekBar = view.findViewById(R.id.volume_seekbar);
 
-        // TrackSelector & ExoPlayer 初始化
+        // TrackSelector & ExoPlayer 初始化 (您的代码保持不变)
         trackSelector = new DefaultTrackSelector(requireContext());
-
-        //优选编码
         DefaultRenderersFactory renderersFactory =
                 new DefaultRenderersFactory(requireContext())
                         .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
                         .setEnableDecoderFallback(true);
-
-        // 构造 ExoPlayer，上面两种构造方法选一
         exoPlayer = new ExoPlayer.Builder(requireContext(), renderersFactory)
                 .setTrackSelector(trackSelector).build();
 
-        // 普通播放状态 & 错误监听
+        // ExoPlayer 监听器等 (您的代码保持不变)
         exoPlayer.addListener(new Player.Listener() {
             @Override
             public void onPlayerError(@NonNull PlaybackException error) {
                 Log.e(TAG, "播放错误: " + error.getMessage());
-                Toast.makeText(requireContext(), "播放错误: " + error.getMessage(), Toast.LENGTH_LONG).show();
+                if (isAdded() && getContext() != null) { // 检查 Fragment 状态
+                    Toast.makeText(getContext(), "播放错误: " + error.getMessage(), Toast.LENGTH_LONG).show();
+                }
                 appendLog("播放错误: " + error.getMessage());
             }
 
@@ -116,7 +127,9 @@ public class HomeFragment extends Fragment {
             }
 
             private void appendLog(String s) {
-                TestFragment logFrag = (TestFragment) requireActivity().getSupportFragmentManager().findFragmentByTag("test_fr");
+                // 确保 getActivity() 不为 null 并且 Fragment isAdded()
+                if (!isAdded() || getActivity() == null) return;
+                TestFragment logFrag = (TestFragment) getActivity().getSupportFragmentManager().findFragmentByTag("test_fr");
                 if (logFrag != null) {
                     String ts = logFrag.getTimestamp();
                     logFrag.appendLog(ts + s);
@@ -125,8 +138,8 @@ public class HomeFragment extends Fragment {
             }
         });
 
-        // 细粒度解码跟踪：使用新的 Audio/Video 回调
         exoPlayer.addAnalyticsListener(new AnalyticsListener() {
+            // ... (您的 AnalyticsListener 代码保持不变) ...
             @Override
             public void onAudioEnabled(AnalyticsListener.EventTime eventTime, DecoderCounters counters) {
                 String line = eventTime.eventPlaybackPositionMs + " 音频解码器已启用  dropped=" + counters.maxConsecutiveDroppedBufferCount;
@@ -173,7 +186,6 @@ public class HomeFragment extends Fragment {
                 if (!isAdded() || getActivity() == null) return;
                 TestFragment logFrag = (TestFragment)
                         getActivity().getSupportFragmentManager().findFragmentByTag("test_fr");
-                //requireActivity().getSupportFragmentManager().findFragmentByTag("test_fr");
                 if (logFrag != null) {
                     String ts = logFrag.getTimestamp();
                     logFrag.appendLog(ts + s);
@@ -182,18 +194,17 @@ public class HomeFragment extends Fragment {
             }
         });
 
-        // 3. 给 PlayerView 设置 player
+
         playerView.setPlayer(exoPlayer);
         playerView.setControllerShowTimeoutMs(1000);
-        //playerView.showController();
-        // 点击退出全屏
         playerView.setOnClickListener(v -> toggleFullscreen());
 
-        // 4. （可选）音量滑杆监听
         volumeSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
-                exoPlayer.setVolume(progress / 100f);
+                if (exoPlayer != null) {
+                    exoPlayer.setVolume(progress / 100f);
+                }
             }
 
             @Override
@@ -205,13 +216,10 @@ public class HomeFragment extends Fragment {
             }
         });
 
-
-        // RecyclerView
         CloudMediaAdapter adapter = new CloudMediaAdapter();
         recyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
         recyclerView.setAdapter(adapter);
 
-        // 登录
         btnLogin.setOnClickListener(v -> mediaService.authenticate(requireActivity(), new CloudMediaService.AuthCallback() {
             @Override
             public void onSuccess() {
@@ -224,23 +232,30 @@ public class HomeFragment extends Fragment {
 
             @Override
             public void onError(Throwable error) {
-                Toast.makeText(requireContext(), "登录失败: " + error.getMessage(), Toast.LENGTH_SHORT).show();
+                if (isAdded() && getContext() != null) {
+                    Toast.makeText(getContext(), "登录失败: " + error.getMessage(), Toast.LENGTH_SHORT).show();
+                }
             }
         }));
-        // 回根目录
+
         btnRoot.setOnClickListener(v -> mediaService.listMedia(null)
                 .observe(getViewLifecycleOwner(), adapter::submitList));
 
-        // 列表点击
         adapter.setOnItemClickListener(item -> {
+            if (!isAdded() || getContext() == null) return; // 防止 Context 为 null
+
             switch (item.getType()) {
                 case IMAGE:
-                    exoPlayer.pause();
+                    if (exoPlayer != null) exoPlayer.pause();
                     playerView.setVisibility(View.GONE);
                     imageView.setVisibility(View.VISIBLE);
-                    loadImageAsync(item.getUrl());
-                    enterFullscreen();
+                    String imgUrl = item.getUrl();
+                    if (imgUrl.contains("1drv.com")) {
+                        imgUrl += (imgUrl.contains("?") ? "&" : "?") + "download=1";
+                    }
+                    loadImageAsync(imgUrl, true); // 使用修改后的 URL
                     imageView.setOnClickListener(v -> toggleFullscreen());
+                    
                     break;
                 case VIDEO:
                     imageView.setVisibility(View.GONE);
@@ -248,27 +263,36 @@ public class HomeFragment extends Fragment {
                     String url = item.getUrl();
                     if (url.contains("1drv.com"))
                         url += (url.contains("?") ? "&" : "?") + "download=1";
-                    //Log.d(TAG, "Exo 播放直链: " + url);
-                    exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(url)));
-                    exoPlayer.prepare();
-                    exoPlayer.play();
+                    if (exoPlayer != null) {
+                        exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(url)));
+                        exoPlayer.prepare();
+                        exoPlayer.play();
+                    }
                     enterFullscreen();
                     break;
                 case FOLDER:
-                    exoPlayer.pause();
+                    if (exoPlayer != null) exoPlayer.pause();
                     playerView.setVisibility(View.GONE);
                     imageView.setVisibility(View.GONE);
                     mediaService.listMedia(item.getId()).observe(getViewLifecycleOwner(), adapter::submitList);
                     break;
+                case APK:
+                    Toast.makeText(getContext(), "准备安装：" + item.getName(), Toast.LENGTH_SHORT).show();
+                    String apkUrl = item.getUrl();
+                    if (apkUrl.contains("1drv.com")) {
+                        apkUrl += (apkUrl.contains("?") ? "&" : "?") + "download=1";
+                    }
+                    // 调用 ApkDownloader 的方法
+                    downloadAndInstallApk(apkUrl, item.getName());
+                    break;
                 default:
-                    Toast.makeText(requireContext(), "无法播放该文件类型", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(getContext(), "无法播放该文件类型", Toast.LENGTH_SHORT).show();
             }
         });
     }
 
-
-    // —— 图片加载 ——
-    private void loadImageAsync(String url) {
+    private void loadImageAsync(String url, boolean needFullscreen) {
+        // ... (您的 loadImageAsync 代码保持不变) ...
         new Thread(() -> {
             HttpURLConnection conn = null;
             try {
@@ -279,29 +303,51 @@ public class HomeFragment extends Fragment {
                 BitmapFactory.Options opts = new BitmapFactory.Options();
                 opts.inJustDecodeBounds = true;
                 BitmapFactory.decodeStream(conn.getInputStream(), null, opts);
-                conn.disconnect();
+                conn.disconnect(); // Important to disconnect here before making new connection
+
+                // Ensure imageView is available and fragment is added
+                if (!isAdded() || imageView == null) return;
 
                 int reqW = imageView.getWidth() > 0 ? imageView.getWidth() : Resources.getSystem().getDisplayMetrics().widthPixels;
                 int reqH = imageView.getHeight() > 0 ? imageView.getHeight() : Resources.getSystem().getDisplayMetrics().heightPixels;
                 opts.inSampleSize = calculateInSampleSize(opts, reqW, reqH);
                 opts.inJustDecodeBounds = false;
 
+                // Re-establish connection
                 conn = (HttpURLConnection) u.openConnection();
                 conn.setDoInput(true);
                 conn.connect();
                 final Bitmap bmp = BitmapFactory.decodeStream(conn.getInputStream(), null, opts);
-                conn.disconnect();
-                requireActivity().runOnUiThread(() -> imageView.setImageBitmap(bmp));
+                conn.disconnect(); // Disconnect after decoding
+
+                if (isAdded() && getActivity() != null && imageView != null && bmp != null) {
+                    getActivity().runOnUiThread(() -> {
+                                imageView.setImageBitmap(bmp);
+                                if (needFullscreen)
+                                    // 确保 imageView 完成测量和布局
+                                    imageView.post(this::enterFullscreen);
+                            }
+                    );
+
+                } else if (bmp == null && isAdded() && getActivity() != null) {
+                    getActivity().runOnUiThread(() -> Toast.makeText(getContext(), "解码图片失败", Toast.LENGTH_SHORT).show());
+                }
             } catch (Exception e) {
                 e.printStackTrace();
-                requireActivity().runOnUiThread(() -> Toast.makeText(requireContext(), "加载图片失败", Toast.LENGTH_SHORT).show());
+                if (isAdded() && getActivity() != null && getContext() != null) { // Check context for Toast
+                    getActivity().runOnUiThread(() -> Toast.makeText(getContext(), "加载图片失败: " + e.getMessage(), Toast.LENGTH_SHORT).show());
+                }
             } finally {
-                if (conn != null) conn.disconnect();
+                if (conn != null) {
+                    conn.disconnect();
+                }
             }
         }).start();
     }
 
+
     private int calculateInSampleSize(BitmapFactory.Options options, int reqWidth, int reqHeight) {
+        // ... (您的 calculateInSampleSize 代码保持不变) ...
         final int height = options.outHeight;
         final int width = options.outWidth;
         int inSampleSize = 1;
@@ -316,99 +362,90 @@ public class HomeFragment extends Fragment {
     }
 
     private void enterFullscreen() {
-        isFullscreen = true;
-        // 隐藏顶部列表区
-        View topContainer = requireActivity().findViewById(R.id.top_container);
-        if (topContainer != null) topContainer.setVisibility(View.GONE);
-
-        // 扩展下半区到底部全屏
-        ConstraintLayout.LayoutParams blp =
-                (ConstraintLayout.LayoutParams) requireActivity()
-                        .findViewById(R.id.bottom_container)
-                        .getLayoutParams();
-        // 取消顶部“连接到 guideline”
-        blp.topToTop = ConstraintLayout.LayoutParams.PARENT_ID;
-        blp.topToBottom = ConstraintLayout.LayoutParams.UNSET;
-        requireActivity().findViewById(R.id.bottom_container)
-                .setLayoutParams(blp);
-
-        // 隐藏系统 UI（StatusBar & Navigation）
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            requireActivity().getWindow().getInsetsController().hide(
-                    WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
-            requireActivity().getWindow().getInsetsController()
-                    .setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
-        } else {
-            requireActivity().getWindow().getDecorView().setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_FULLSCREEN |
-                            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
-                            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
-        }
-        // 隐藏其他控件
-        btnLogin.setVisibility(View.GONE);
-        btnRoot.setVisibility(View.GONE);
-        recyclerView.setVisibility(View.GONE);
-        // 隐藏底部导航/分页按钮（假设ID为 bottom_nav）
-        View bottomNav = requireActivity().findViewById(R.id.bottom_nav);
-        if (bottomNav != null) bottomNav.setVisibility(View.GONE);
-        // 将播放器View上下居中
-        if (playerView.getLayoutParams() instanceof FrameLayout.LayoutParams) {
-            FrameLayout.LayoutParams flp = (FrameLayout.LayoutParams) playerView.getLayoutParams();
-            flp.gravity = Gravity.CENTER;
-            playerView.setLayoutParams(flp);
-        }
+        // ... (您的 enterFullscreen 代码保持不变, 但请确保 getActivity() 和 findViewById 的安全性检查) ...
         if (isFullscreen) return;
         isFullscreen = true;
-        // 隐藏系统 UI
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            requireActivity().getWindow().getInsetsController().hide(
-                    WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
-            requireActivity().getWindow().getInsetsController()
-                    .setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
-        } else {
-            View decor = requireActivity().getWindow().getDecorView();
-            int flags = View.SYSTEM_UI_FLAG_FULLSCREEN
-                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                    | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
-            decor.setSystemUiVisibility(flags);
+        Activity activity = getActivity();
+        if (activity == null) return;
+        Window window = activity.getWindow();
+        // ... rest of your code
+        View controls = activity.findViewById(R.id.controls_container);
+        if (controls != null) {
+            controls.setVisibility(View.GONE);
         }
-        // 隐藏其余 UI
-        btnLogin.setVisibility(View.GONE);
-        btnRoot.setVisibility(View.GONE);
-        recyclerView.setVisibility(View.GONE);
+        View bottomNav = activity.findViewById(R.id.bottom_nav);
+        if (bottomNav != null) bottomNav.setVisibility(View.GONE);
+        View bottom = activity.findViewById(R.id.bottom_container);
+        if (bottom != null) {
+            ConstraintLayout.LayoutParams lp =
+                    (ConstraintLayout.LayoutParams) bottom.getLayoutParams();
+            lp.topToTop = ConstraintLayout.LayoutParams.PARENT_ID;
+            lp.topToBottom = ConstraintLayout.LayoutParams.UNSET;
+            bottom.setLayoutParams(lp);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            WindowInsetsController ic = window.getInsetsController();
+            if (ic != null) {
+                ic.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+                ic.setSystemBarsBehavior(
+                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                );
+            }
+        } else {
+            window.getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            );
+        }
+
+        if (imageView == null || playerView == null) return; // Add null checks for views
+        View toFs = imageView.getVisibility() == View.VISIBLE
+                ? imageView : playerView;
+        ViewGroup.LayoutParams lp = toFs.getLayoutParams();
+        lp.width = ViewGroup.LayoutParams.MATCH_PARENT;
+        lp.height = ViewGroup.LayoutParams.MATCH_PARENT;
+        toFs.setLayoutParams(lp);
+        toFs.requestLayout();
+        toFs.bringToFront();
+
     }
 
     private void exitFullscreen() {
+        // ... (您的 exitFullscreen 代码保持不变, 但请确保 getActivity() 和 findViewById 的安全性检查) ...
         if (!isFullscreen) return;
         isFullscreen = false;
-
-        // 恢复顶部列表区
-        View topContainer = requireActivity().findViewById(R.id.top_container);
-        if (topContainer != null) topContainer.setVisibility(View.VISIBLE);
-
-        // 恢复下半区原始约束
-        ConstraintLayout.LayoutParams blp =
-                (ConstraintLayout.LayoutParams) requireActivity()
-                        .findViewById(R.id.bottom_container)
-                        .getLayoutParams();
-        blp.topToTop = ConstraintLayout.LayoutParams.UNSET;
-        blp.topToBottom = R.id.guideline_half;
-        requireActivity().findViewById(R.id.bottom_container)
-                .setLayoutParams(blp);
-
-        // 恢复系统 UI
+        Activity activity = getActivity();
+        if (activity == null) return;
+        Window window = activity.getWindow();
+        // ... rest of your code
+        View controls = activity.findViewById(R.id.controls_container);
+        if (controls != null) {
+            controls.setVisibility(View.VISIBLE);
+        }
+        View bottomNav = activity.findViewById(R.id.bottom_nav);
+        if (bottomNav != null) {
+            bottomNav.setVisibility(View.VISIBLE);
+        }
+        View bottom = activity.findViewById(R.id.bottom_container);
+        if (bottom != null) {
+            ConstraintLayout.LayoutParams lp =
+                    (ConstraintLayout.LayoutParams) bottom.getLayoutParams();
+            lp.topToTop = ConstraintLayout.LayoutParams.UNSET;
+            lp.topToBottom = R.id.guideline_half; // Make sure R.id.guideline_half is valid
+            bottom.setLayoutParams(lp);
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            requireActivity().getWindow().getInsetsController().show(
-                    WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+            WindowInsetsController ic = window.getInsetsController();
+            if (ic != null) {
+                ic.show(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+            }
         } else {
-            requireActivity().getWindow().getDecorView()
+            window.getDecorView()
                     .setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
         }
-        // 恢复其他 UI
-        btnLogin.setVisibility(View.VISIBLE);
-        btnRoot.setVisibility(View.VISIBLE);
-        recyclerView.setVisibility(View.VISIBLE);
     }
+
 
     private void toggleFullscreen() {
         if (isFullscreen) exitFullscreen();
@@ -422,6 +459,38 @@ public class HomeFragment extends Fragment {
             exoPlayer.release();
             exoPlayer = null;
         }
+        // 在 onDestroyView 中调用 ApkDownloader 的 cleanup 方法
+        if (apkDownloader != null) {
+            //Gemini说要在这里清除，但是Chatgpt说不要，暂时听chatgpt的
+            //apkDownloader.cleanup();
+        }
+        // 将视图成员变量置空，帮助GC，防止内存泄漏
+        playerView = null;
+        imageView = null;
+        recyclerView = null;
+        volumeSeekBar = null;
+        btnLogin = null;
+        btnRoot = null;
+        btnGo = null;
+        // trackSelector 可能也需要某种形式的清理或置空，具体取决于其实现
+        trackSelector = null;
     }
 
+    private void downloadAndInstallApk(String url, String fileName) {
+        if (apkDownloader != null) {
+            // 使用 requireActivity() 作为 Context，因为它是一个 Activity Context，
+            // ApkDownloader 中的 downloadAndInstallApk 方法需要它来显示 Toast 和启动安装程序。
+            if (isAdded() && getActivity() != null) { // 确保 Fragment 仍然附加到 Activity
+                apkDownloader.downloadAndInstallApk(url, fileName, requireActivity());
+            } else {
+                Log.e(TAG, "Fragment not attached to an activity, cannot start download.");
+            }
+        } else {
+            // 这种情况理论上不应该发生，因为我们在 onAttach 中初始化了 apkDownloader
+            Log.e(TAG, "ApkDownloader not initialized!");
+            if (isAdded() && getContext() != null) {
+                Toast.makeText(getContext(), "下载器服务未准备好", Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
 }

@@ -10,12 +10,11 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        app:layout_constraintGuide_begin="0dp"
         app:layout_constraintGuide_percent="0.5" />
 
-    <!-- 上半区：登录 + 列表 -->
+    <!-- **1. 把所有非播放 UI（登录/列表/按钮）包到这里** -->
     <LinearLayout
-        android:id="@+id/top_container"
+        android:id="@+id/controls_container"
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:orientation="vertical"
@@ -35,15 +34,22 @@
                 android:id="@+id/btnLogin"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="登录 OneDrive" />
+                android:layout_weight="2"
+                android:text="登录OneDrive" />
 
             <Button
                 android:id="@+id/btnRoot"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
+                android:layout_weight="1.5"
                 android:text="根目录" />
+
+            <Button
+                android:id="@+id/btnGo"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="播放" />
         </LinearLayout>
 
         <!-- 列表，占满剩余空间 -->
@@ -51,18 +57,18 @@
             android:id="@+id/recyclerView"
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_marginTop="8dp"
             android:layout_weight="1"
             android:overScrollMode="always"
             android:scrollbars="vertical" />
+
     </LinearLayout>
 
-    <!-- 下半区：播放区 -->
+    <!-- 2. 播放区单独放这儿，方便拉伸／居中 -->
     <FrameLayout
         android:id="@+id/bottom_container"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:background="@android:color/black"
+        android:background="#000"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
@@ -72,9 +78,15 @@
             android:id="@+id/player_view"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:background="#000000"
             app:show_buffering="when_playing"
-            app:show_shuffle_button="true" />           <!-- 显示控制器 -->
+            app:show_shuffle_button="true" />
+
+        <ImageView
+            android:id="@+id/imageView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerInside"
+            android:visibility="gone" />
 
         <SeekBar
             android:id="@+id/volume_seekbar"
@@ -84,13 +96,6 @@
             android:progress="100"
             android:visibility="gone" />
 
-        <ImageView
-            android:id="@+id/imageView"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:background="#000000"
-            android:scaleType="centerInside"
-            android:visibility="gone" />
     </FrameLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
