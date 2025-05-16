@@ -22,10 +22,12 @@ import com.microsoft.identity.client.exception.MsalException;
 import com.robinsoft.cloudmediaplayer.R;
 
 import java.io.IOException;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.TimeUnit;
 
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -152,7 +154,6 @@ public class OneDriveMediaService implements CloudMediaService {
     @Override
 
     public LiveData<List<CloudMediaItem>> listMedia(String folderId) {
-        // 假设 mediaLiveData 是在类中定义好的 MutableLiveData<List<CloudMediaItem>>
         MutableLiveData<List<CloudMediaItem>> mediaLiveData = new MutableLiveData<>();
 
         new Thread(() -> {
@@ -165,7 +166,10 @@ public class OneDriveMediaService implements CloudMediaService {
                     url = "https://graph.microsoft.com/v1.0/me/drive/items/" + folderId + "/children";
                 }
 
-                OkHttpClient client = new OkHttpClient();
+                OkHttpClient client = new OkHttpClient.Builder()
+                        .connectTimeout(15, TimeUnit.SECONDS)
+                        .readTimeout(30, TimeUnit.SECONDS)
+                        .build();
                 Request request = new Request.Builder()
                         .url(url)
                         .addHeader("Authorization", "Bearer " + accessToken)
@@ -187,16 +191,23 @@ public class OneDriveMediaService implements CloudMediaService {
                             ? obj.get("@microsoft.graph.downloadUrl").getAsString()
                             : obj.get("webUrl").getAsString();
 
+                    // 解析 lastModifiedDateTime
+                    String lmText = obj.has("lastModifiedDateTime")
+                            ? obj.get("lastModifiedDateTime").getAsString()
+                            : null;
+                    OffsetDateTime lastModified = lmText != null
+                            ? OffsetDateTime.parse(lmText)
+                            : OffsetDateTime.MIN;
+
                     CloudMediaItem.MediaType type;
                     if (obj.has("folder")) {
                         type = CloudMediaItem.MediaType.FOLDER;
                     } else if (obj.has("file")) {
                         JsonObject fileObj = obj.getAsJsonObject("file");
                         String mime = fileObj.get("mimeType").getAsString();
-                        String lowerName = name.toLowerCase(Locale.ROOT);
-
+                        String lower = name.toLowerCase(Locale.ROOT);
                         if ("application/vnd.android.package-archive".equals(mime)
-                                || lowerName.endsWith(".apk")) {
+                                || lower.endsWith(".apk")) {
                             type = CloudMediaItem.MediaType.APK;
                         } else if (mime.startsWith("image/")) {
                             type = CloudMediaItem.MediaType.IMAGE;
@@ -206,11 +217,11 @@ public class OneDriveMediaService implements CloudMediaService {
                             type = CloudMediaItem.MediaType.FILE;
                         }
                     } else {
-                        // 既不是文件也不是文件夹，归为普通文件
                         type = CloudMediaItem.MediaType.FILE;
                     }
 
-                    list.add(new CloudMediaItem(id, name, downloadUrl, type));
+                    // 构造时传入 lastModifiedDateTime
+                    list.add(new CloudMediaItem(id, name, downloadUrl, type, lastModified));
                 }
 
                 mediaLiveData.postValue(list);

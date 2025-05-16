@@ -1,15 +1,24 @@
 package com.robinsoft.cloudmediaplayer.cloud;
 
+import java.time.OffsetDateTime;
+
 public class CloudMediaItem {
     private final String id;
     private final String name;
     private final String url;
     private final MediaType type;
-    public CloudMediaItem(String id, String name, String url, MediaType type) {
+    private final OffsetDateTime lastModifiedDateTime;  // 新增
+
+    public CloudMediaItem(String id,
+                          String name,
+                          String url,
+                          MediaType type,
+                          OffsetDateTime lastModifiedDateTime) {
         this.id = id;
         this.name = name;
         this.url = url;
         this.type = type;
+        this.lastModifiedDateTime = lastModifiedDateTime;
     }
 
     public String getId() {
@@ -28,11 +37,11 @@ public class CloudMediaItem {
         return type;
     }
 
+    public OffsetDateTime getLastModifiedDateTime() {
+        return lastModifiedDateTime;
+    }
+
     public enum MediaType {
-        IMAGE,      // 图片文件
-        VIDEO,      // 视频文件
-        APK,
-        FILE,       // 普通文件（含快捷方式）
-        FOLDER      // 子目录
+        IMAGE, VIDEO, APK, FILE, FOLDER
     }
 }

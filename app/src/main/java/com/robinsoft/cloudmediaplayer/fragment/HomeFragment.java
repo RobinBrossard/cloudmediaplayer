@@ -42,11 +42,17 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.robinsoft.cloudmediaplayer.R;
 import com.robinsoft.cloudmediaplayer.adapter.CloudMediaAdapter;
+import com.robinsoft.cloudmediaplayer.cloud.CloudMediaItem;
 import com.robinsoft.cloudmediaplayer.cloud.CloudMediaService;
 import com.robinsoft.cloudmediaplayer.cloud.OneDriveMediaService;
 
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.Deque;
+import java.util.List;
 
 @UnstableApi
 public class HomeFragment extends Fragment {
@@ -62,21 +68,47 @@ public class HomeFragment extends Fragment {
     private Button btnLogin, btnRoot, btnGo;
     private boolean isFullscreen = false;
 
+    // 自动播放相关
+    private String currentDirId;
+    private String autoRootId;
+    private Deque<String> autoPlayStack = new ArrayDeque<>();
+    private boolean isAutoPlaying = false;
+
+    private CloudMediaAdapter adapter;
+
     // 声明 ApkDownloader 成员变量
     private ApkDownloader apkDownloader;
 
-    // 在 onAttach 中初始化 ApkDownloader，这是一个好时机，因为 Context 在此时可用
     @Override
     public void onAttach(@NonNull Context context) {
         super.onAttach(context);
-        // 使用 context 初始化 ApkDownloader，它内部会获取 ApplicationContext
         apkDownloader = new ApkDownloader(context);
     }
 
     @Nullable
     @Override
-    public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
+    public View onCreateView(@NonNull LayoutInflater inflater,
+                             @Nullable ViewGroup container,
+                             @Nullable Bundle savedInstanceState) {
         return inflater.inflate(R.layout.fragment_home, container, false);
+    }
+
+    private void appendLog(String s) {
+        if (!isAdded() || getActivity() == null) return;
+        TestFragment logFrag = (TestFragment) getActivity()
+                .getSupportFragmentManager()
+                .findFragmentByTag("test_fr");
+        if (logFrag != null) {
+            String ts = logFrag.getTimestamp();
+            logFrag.appendLog(ts + s);
+            Log.d(TAG, s);
+        }
+    }
+
+    // 刷新当前目录列表
+    private void refreshDirectory() {
+        mediaService.listMedia(currentDirId)
+                .observe(getViewLifecycleOwner(), items -> adapter.submitList(items));
     }
 
     @UnstableApi
@@ -93,21 +125,22 @@ public class HomeFragment extends Fragment {
         playerView = view.findViewById(R.id.player_view);
         volumeSeekBar = view.findViewById(R.id.volume_seekbar);
 
-        // TrackSelector & ExoPlayer 初始化 (您的代码保持不变)
+        // ExoPlayer 初始化
         trackSelector = new DefaultTrackSelector(requireContext());
         DefaultRenderersFactory renderersFactory =
                 new DefaultRenderersFactory(requireContext())
                         .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
                         .setEnableDecoderFallback(true);
         exoPlayer = new ExoPlayer.Builder(requireContext(), renderersFactory)
-                .setTrackSelector(trackSelector).build();
+                .setTrackSelector(trackSelector)
+                .build();
 
-        // ExoPlayer 监听器等 (您的代码保持不变)
+        // 播放器监听
         exoPlayer.addListener(new Player.Listener() {
             @Override
             public void onPlayerError(@NonNull PlaybackException error) {
                 Log.e(TAG, "播放错误: " + error.getMessage());
-                if (isAdded() && getContext() != null) { // 检查 Fragment 状态
+                if (isAdded() && getContext() != null) {
                     Toast.makeText(getContext(), "播放错误: " + error.getMessage(), Toast.LENGTH_LONG).show();
                 }
                 appendLog("播放错误: " + error.getMessage());
@@ -116,7 +149,8 @@ public class HomeFragment extends Fragment {
             @Override
             public void onPlaybackStateChanged(int playbackState) {
                 if (playbackState == Player.STATE_READY) {
-                    MappingTrackSelector.MappedTrackInfo info = trackSelector.getCurrentMappedTrackInfo();
+                    MappingTrackSelector.MappedTrackInfo info =
+                            trackSelector.getCurrentMappedTrackInfo();
                     if (info != null) {
                         for (int i = 0; i < info.getRendererCount(); i++) {
                             String name = info.getRendererName(i);
@@ -125,109 +159,105 @@ public class HomeFragment extends Fragment {
                     }
                 }
             }
-
-            private void appendLog(String s) {
-                // 确保 getActivity() 不为 null 并且 Fragment isAdded()
-                if (!isAdded() || getActivity() == null) return;
-                TestFragment logFrag = (TestFragment) getActivity().getSupportFragmentManager().findFragmentByTag("test_fr");
-                if (logFrag != null) {
-                    String ts = logFrag.getTimestamp();
-                    logFrag.appendLog(ts + s);
-                    Log.d(TAG, s);
-                }
-            }
         });
 
         exoPlayer.addAnalyticsListener(new AnalyticsListener() {
-            // ... (您的 AnalyticsListener 代码保持不变) ...
             @Override
             public void onAudioEnabled(AnalyticsListener.EventTime eventTime, DecoderCounters counters) {
                 String line = eventTime.eventPlaybackPositionMs + " 音频解码器已启用  dropped=" + counters.maxConsecutiveDroppedBufferCount;
-                Log.d(TAG, line);
                 appendLog(line);
             }
 
             @Override
             public void onVideoEnabled(AnalyticsListener.EventTime eventTime, DecoderCounters counters) {
                 String line = eventTime.eventPlaybackPositionMs + " 视频解码器已启用  dropped=" + counters.maxConsecutiveDroppedBufferCount;
-                Log.d(TAG, line);
                 appendLog(line);
             }
 
             @Override
-            public void onAudioInputFormatChanged(AnalyticsListener.EventTime eventTime, Format format, @Nullable DecoderReuseEvaluation decoderReuseEvaluation) {
+            public void onAudioInputFormatChanged(AnalyticsListener.EventTime eventTime, Format format, @Nullable DecoderReuseEvaluation evaluation) {
                 String line = eventTime.eventPlaybackPositionMs + " 音频输入格式切换  mime=" + format.sampleMimeType;
-                Log.d(TAG, line);
                 appendLog(line);
             }
 
             @Override
-            public void onVideoInputFormatChanged(AnalyticsListener.EventTime eventTime, Format format, @Nullable DecoderReuseEvaluation decoderReuseEvaluation) {
-                String line = eventTime.eventPlaybackPositionMs + " 视频输入格式切换  mime=" + format.sampleMimeType + " 分辨率=" + format.width + "x" + format.height;
-                Log.d(TAG, line);
+            public void onVideoInputFormatChanged(AnalyticsListener.EventTime eventTime, Format format, @Nullable DecoderReuseEvaluation evaluation) {
+                String line = eventTime.eventPlaybackPositionMs + " 视频输入格式切换  mime=" + format.sampleMimeType
+                        + " 分辨率=" + format.width + "x" + format.height;
                 appendLog(line);
             }
 
             @Override
             public void onAudioDisabled(AnalyticsListener.EventTime eventTime, DecoderCounters counters) {
-                String line = eventTime.eventPlaybackPositionMs + " 音频解码器已禁用";
-                Log.d(TAG, line);
-                appendLog(line);
+                appendLog(eventTime.eventPlaybackPositionMs + " 音频解码器已禁用");
             }
 
             @Override
             public void onVideoDisabled(AnalyticsListener.EventTime eventTime, DecoderCounters counters) {
-                String line = eventTime.eventPlaybackPositionMs + " 视频解码器已禁用";
-                Log.d(TAG, line);
-                appendLog(line);
-            }
-
-            private void appendLog(String s) {
-                if (!isAdded() || getActivity() == null) return;
-                TestFragment logFrag = (TestFragment)
-                        getActivity().getSupportFragmentManager().findFragmentByTag("test_fr");
-                if (logFrag != null) {
-                    String ts = logFrag.getTimestamp();
-                    logFrag.appendLog(ts + s);
-                    Log.d(TAG, s);
-                }
+                appendLog(eventTime.eventPlaybackPositionMs + " 视频解码器已禁用");
             }
         });
-
 
         playerView.setPlayer(exoPlayer);
         playerView.setControllerShowTimeoutMs(1000);
-        playerView.setOnClickListener(v -> toggleFullscreen());
 
-        volumeSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
-                if (exoPlayer != null) {
-                    exoPlayer.setVolume(progress / 100f);
-                }
-            }
-
-            @Override
-            public void onStartTrackingTouch(SeekBar sb) {
-            }
-
-            @Override
-            public void onStopTrackingTouch(SeekBar sb) {
-            }
-        });
-
-        CloudMediaAdapter adapter = new CloudMediaAdapter();
+        // 初始化适配器
+        adapter = new CloudMediaAdapter();
         recyclerView.setLayoutManager(new LinearLayoutManager(requireContext()));
         recyclerView.setAdapter(adapter);
 
+        // 条目点击
+        adapter.setOnItemClickListener(item -> {
+            if (!isAdded() || getContext() == null) return;
+            if (item.getType() == CloudMediaItem.MediaType.FOLDER) {
+                if (exoPlayer != null) exoPlayer.pause();
+                currentDirId = item.getId();
+                refreshDirectory();
+                return;
+            }
+            switch (item.getType()) {
+                case IMAGE:
+                    if (exoPlayer != null) exoPlayer.pause();
+                    playerView.setVisibility(View.GONE);
+                    imageView.setVisibility(View.VISIBLE);
+                    String imgUrl = item.getUrl();
+                    if (imgUrl.contains("1drv.com")) {
+                        imgUrl += (imgUrl.contains("?") ? "&" : "?") + "download=1";
+                    }
+                    loadImageAsync(imgUrl, true);
+                    break;
+                case VIDEO:
+                    imageView.setVisibility(View.GONE);
+                    playerView.setVisibility(View.VISIBLE);
+                    String url = item.getUrl();
+                    if (url.contains("1drv.com")) {
+                        url += (url.contains("?") ? "&" : "?") + "download=1";
+                    }
+                    exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(url)));
+                    exoPlayer.prepare();
+                    exoPlayer.play();
+                    enterFullscreen();
+                    break;
+                case APK:
+                    Toast.makeText(getContext(), "准备安装：" + item.getName(), Toast.LENGTH_SHORT).show();
+                    String apkUrl = item.getUrl();
+                    if (apkUrl.contains("1drv.com")) {
+                        apkUrl += (apkUrl.contains("?") ? "&" : "?") + "download=1";
+                    }
+                    downloadAndInstallApk(apkUrl, item.getName());
+                    break;
+                default:
+                    Toast.makeText(getContext(), "无法播放该文件类型", Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        // 登录按钮
         btnLogin.setOnClickListener(v -> mediaService.authenticate(requireActivity(), new CloudMediaService.AuthCallback() {
             @Override
             public void onSuccess() {
-                mediaService.listMedia(null).observe(getViewLifecycleOwner(), items -> {
-                    adapter.submitList(items);
-                    playerView.setVisibility(View.GONE);
-                    imageView.setVisibility(View.GONE);
-                });
+                currentDirId = null;
+                mediaService.listMedia(null)
+                        .observe(getViewLifecycleOwner(), items -> adapter.submitList(items));
             }
 
             @Override
@@ -238,61 +268,135 @@ public class HomeFragment extends Fragment {
             }
         }));
 
-        btnRoot.setOnClickListener(v -> mediaService.listMedia(null)
-                .observe(getViewLifecycleOwner(), adapter::submitList));
+        // 根目录按钮
+        btnRoot.setOnClickListener(v -> {
+            currentDirId = null;
+            refreshDirectory();
+        });
 
-        adapter.setOnItemClickListener(item -> {
-            if (!isAdded() || getContext() == null) return; // 防止 Context 为 null
+        // 自动播放按钮
+        btnGo.setOnClickListener(v -> {
+            if (!isAutoPlaying) {
+                autoRootId = currentDirId;
+                autoPlayStack.clear();
+                autoPlayStack.push(autoRootId);
+                isAutoPlaying = true;
+                btnGo.setText("停止");
+                enterFullscreen();
+                startAutoPlay();
+            } else {
+                exitFullscreen();
+                stopAutoPlay();
+                btnGo.setText("播放");
+                refreshDirectory();
+            }
+        });
 
-            switch (item.getType()) {
-                case IMAGE:
-                    if (exoPlayer != null) exoPlayer.pause();
-                    playerView.setVisibility(View.GONE);
-                    imageView.setVisibility(View.VISIBLE);
-                    String imgUrl = item.getUrl();
-                    if (imgUrl.contains("1drv.com")) {
-                        imgUrl += (imgUrl.contains("?") ? "&" : "?") + "download=1";
-                    }
-                    loadImageAsync(imgUrl, true); // 使用修改后的 URL
-                    imageView.setOnClickListener(v -> toggleFullscreen());
-                    
-                    break;
-                case VIDEO:
-                    imageView.setVisibility(View.GONE);
-                    playerView.setVisibility(View.VISIBLE);
-                    String url = item.getUrl();
-                    if (url.contains("1drv.com"))
-                        url += (url.contains("?") ? "&" : "?") + "download=1";
-                    if (exoPlayer != null) {
-                        exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(url)));
-                        exoPlayer.prepare();
-                        exoPlayer.play();
-                    }
-                    enterFullscreen();
-                    break;
-                case FOLDER:
-                    if (exoPlayer != null) exoPlayer.pause();
-                    playerView.setVisibility(View.GONE);
-                    imageView.setVisibility(View.GONE);
-                    mediaService.listMedia(item.getId()).observe(getViewLifecycleOwner(), adapter::submitList);
-                    break;
-                case APK:
-                    Toast.makeText(getContext(), "准备安装：" + item.getName(), Toast.LENGTH_SHORT).show();
-                    String apkUrl = item.getUrl();
-                    if (apkUrl.contains("1drv.com")) {
-                        apkUrl += (apkUrl.contains("?") ? "&" : "?") + "download=1";
-                    }
-                    // 调用 ApkDownloader 的方法
-                    downloadAndInstallApk(apkUrl, item.getName());
-                    break;
-                default:
-                    Toast.makeText(getContext(), "无法播放该文件类型", Toast.LENGTH_SHORT).show();
+        // 播放器及图片点击：停止自动播放 & 退出全屏
+        View.OnClickListener stopOnClick = v -> {
+            if (isAutoPlaying && isFullscreen) {
+                exitFullscreen();
+                stopAutoPlay();
+                btnGo.setText("播放");
+                refreshDirectory();
+            } else {
+                toggleFullscreen();
+            }
+        };
+        playerView.setOnClickListener(stopOnClick);
+        imageView.setOnClickListener(stopOnClick);
+
+        // 音量进度条
+        volumeSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
+                if (exoPlayer != null) exoPlayer.setVolume(progress / 100f);
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar sb) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar sb) {
             }
         });
     }
 
+    /**
+     * 自动播放流程
+     */
+    private void startAutoPlay() {
+        if (!isAutoPlaying) return;
+        if (autoPlayStack.isEmpty()) {
+            autoPlayStack.push(autoRootId);
+        }
+        String dirId = autoPlayStack.pop();
+        mediaService.listMedia(dirId)
+                .observe(getViewLifecycleOwner(), items -> {
+                    List<String> childDirs = new ArrayList<>();
+                    List<CloudMediaItem> files = new ArrayList<>();
+                    for (CloudMediaItem it : items) {
+                        if (it.getType() == CloudMediaItem.MediaType.FOLDER) {
+                            childDirs.add(it.getId());
+                        } else if (it.getType() == CloudMediaItem.MediaType.IMAGE || it.getType() == CloudMediaItem.MediaType.VIDEO) {
+                            files.add(it);
+                        }
+                    }
+                    // 按修改时间升序
+                    Comparator<CloudMediaItem> byTime = Comparator.comparing(CloudMediaItem::getLastModifiedDateTime);
+                    childDirs.sort((a, b) -> 0); // 无时间字段时保持顺序
+                    files.sort(byTime);
+                    // 逆序入栈
+                    for (int i = childDirs.size() - 1; i >= 0; i--) {
+                        autoPlayStack.push(childDirs.get(i));
+                    }
+                    playFilesSequentially(files, this::startAutoPlay);
+                });
+    }
+
+    private void playFilesSequentially(List<CloudMediaItem> files, Runnable onAllDone) {
+        playFileAtIndex(files, 0, onAllDone);
+    }
+
+    private void playFileAtIndex(List<CloudMediaItem> files, int idx, Runnable onAllDone) {
+        if (!isAutoPlaying) return;
+        if (idx >= files.size()) {
+            onAllDone.run();
+            return;
+        }
+        CloudMediaItem item = files.get(idx);
+        String url = item.getUrl() + (item.getUrl().contains("?") ? "&" : "?") + "download=1";
+        if (item.getType() == CloudMediaItem.MediaType.IMAGE) {
+            playerView.setVisibility(View.GONE);
+            imageView.setVisibility(View.VISIBLE);
+            loadImageAsync(url, false);
+            imageView.postDelayed(() -> playFileAtIndex(files, idx + 1, onAllDone), 3_000);
+        } else {
+            imageView.setVisibility(View.GONE);
+            playerView.setVisibility(View.VISIBLE);
+            exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(url)));
+            exoPlayer.prepare();
+            exoPlayer.play();
+            exoPlayer.addListener(new Player.Listener() {
+                @Override
+                public void onPlaybackStateChanged(int state) {
+                    if (state == Player.STATE_ENDED) {
+                        exoPlayer.removeListener(this);
+                        playFileAtIndex(files, idx + 1, onAllDone);
+                    }
+                }
+            });
+        }
+    }
+
+    private void stopAutoPlay() {
+        isAutoPlaying = false;
+        autoPlayStack.clear();
+        if (exoPlayer != null) exoPlayer.pause();
+    }
+
     private void loadImageAsync(String url, boolean needFullscreen) {
-        // ... (您的 loadImageAsync 代码保持不变) ...
         new Thread(() -> {
             HttpURLConnection conn = null;
             try {
@@ -303,51 +407,40 @@ public class HomeFragment extends Fragment {
                 BitmapFactory.Options opts = new BitmapFactory.Options();
                 opts.inJustDecodeBounds = true;
                 BitmapFactory.decodeStream(conn.getInputStream(), null, opts);
-                conn.disconnect(); // Important to disconnect here before making new connection
+                conn.disconnect();
 
-                // Ensure imageView is available and fragment is added
                 if (!isAdded() || imageView == null) return;
-
                 int reqW = imageView.getWidth() > 0 ? imageView.getWidth() : Resources.getSystem().getDisplayMetrics().widthPixels;
                 int reqH = imageView.getHeight() > 0 ? imageView.getHeight() : Resources.getSystem().getDisplayMetrics().heightPixels;
                 opts.inSampleSize = calculateInSampleSize(opts, reqW, reqH);
                 opts.inJustDecodeBounds = false;
 
-                // Re-establish connection
                 conn = (HttpURLConnection) u.openConnection();
                 conn.setDoInput(true);
                 conn.connect();
                 final Bitmap bmp = BitmapFactory.decodeStream(conn.getInputStream(), null, opts);
-                conn.disconnect(); // Disconnect after decoding
+                conn.disconnect();
 
                 if (isAdded() && getActivity() != null && imageView != null && bmp != null) {
                     getActivity().runOnUiThread(() -> {
-                                imageView.setImageBitmap(bmp);
-                                if (needFullscreen)
-                                    // 确保 imageView 完成测量和布局
-                                    imageView.post(this::enterFullscreen);
-                            }
-                    );
-
+                        imageView.setImageBitmap(bmp);
+                        if (needFullscreen) imageView.post(this::enterFullscreen);
+                    });
                 } else if (bmp == null && isAdded() && getActivity() != null) {
                     getActivity().runOnUiThread(() -> Toast.makeText(getContext(), "解码图片失败", Toast.LENGTH_SHORT).show());
                 }
             } catch (Exception e) {
                 e.printStackTrace();
-                if (isAdded() && getActivity() != null && getContext() != null) { // Check context for Toast
+                if (isAdded() && getActivity() != null && getContext() != null) {
                     getActivity().runOnUiThread(() -> Toast.makeText(getContext(), "加载图片失败: " + e.getMessage(), Toast.LENGTH_SHORT).show());
                 }
             } finally {
-                if (conn != null) {
-                    conn.disconnect();
-                }
+                if (conn != null) conn.disconnect();
             }
         }).start();
     }
 
-
     private int calculateInSampleSize(BitmapFactory.Options options, int reqWidth, int reqHeight) {
-        // ... (您的 calculateInSampleSize 代码保持不变) ...
         final int height = options.outHeight;
         final int width = options.outWidth;
         int inSampleSize = 1;
@@ -362,23 +455,19 @@ public class HomeFragment extends Fragment {
     }
 
     private void enterFullscreen() {
-        // ... (您的 enterFullscreen 代码保持不变, 但请确保 getActivity() 和 findViewById 的安全性检查) ...
         if (isFullscreen) return;
         isFullscreen = true;
         Activity activity = getActivity();
         if (activity == null) return;
         Window window = activity.getWindow();
-        // ... rest of your code
+
         View controls = activity.findViewById(R.id.controls_container);
-        if (controls != null) {
-            controls.setVisibility(View.GONE);
-        }
+        if (controls != null) controls.setVisibility(View.GONE);
         View bottomNav = activity.findViewById(R.id.bottom_nav);
         if (bottomNav != null) bottomNav.setVisibility(View.GONE);
         View bottom = activity.findViewById(R.id.bottom_container);
         if (bottom != null) {
-            ConstraintLayout.LayoutParams lp =
-                    (ConstraintLayout.LayoutParams) bottom.getLayoutParams();
+            ConstraintLayout.LayoutParams lp = (ConstraintLayout.LayoutParams) bottom.getLayoutParams();
             lp.topToTop = ConstraintLayout.LayoutParams.PARENT_ID;
             lp.topToBottom = ConstraintLayout.LayoutParams.UNSET;
             bottom.setLayoutParams(lp);
@@ -387,65 +476,49 @@ public class HomeFragment extends Fragment {
             WindowInsetsController ic = window.getInsetsController();
             if (ic != null) {
                 ic.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
-                ic.setSystemBarsBehavior(
-                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                );
+                ic.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
             }
         } else {
             window.getDecorView().setSystemUiVisibility(
                     View.SYSTEM_UI_FLAG_FULLSCREEN
                             | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-            );
+                            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
         }
-
-        if (imageView == null || playerView == null) return; // Add null checks for views
-        View toFs = imageView.getVisibility() == View.VISIBLE
-                ? imageView : playerView;
+        View toFs = imageView.getVisibility() == View.VISIBLE ? imageView : playerView;
         ViewGroup.LayoutParams lp = toFs.getLayoutParams();
         lp.width = ViewGroup.LayoutParams.MATCH_PARENT;
         lp.height = ViewGroup.LayoutParams.MATCH_PARENT;
         toFs.setLayoutParams(lp);
         toFs.requestLayout();
         toFs.bringToFront();
-
     }
 
     private void exitFullscreen() {
-        // ... (您的 exitFullscreen 代码保持不变, 但请确保 getActivity() 和 findViewById 的安全性检查) ...
         if (!isFullscreen) return;
         isFullscreen = false;
         Activity activity = getActivity();
         if (activity == null) return;
         Window window = activity.getWindow();
-        // ... rest of your code
+
         View controls = activity.findViewById(R.id.controls_container);
-        if (controls != null) {
-            controls.setVisibility(View.VISIBLE);
-        }
+        if (controls != null) controls.setVisibility(View.VISIBLE);
         View bottomNav = activity.findViewById(R.id.bottom_nav);
-        if (bottomNav != null) {
-            bottomNav.setVisibility(View.VISIBLE);
-        }
+        if (bottomNav != null) bottomNav.setVisibility(View.VISIBLE);
         View bottom = activity.findViewById(R.id.bottom_container);
         if (bottom != null) {
-            ConstraintLayout.LayoutParams lp =
-                    (ConstraintLayout.LayoutParams) bottom.getLayoutParams();
+            ConstraintLayout.LayoutParams lp = (ConstraintLayout.LayoutParams) bottom.getLayoutParams();
             lp.topToTop = ConstraintLayout.LayoutParams.UNSET;
-            lp.topToBottom = R.id.guideline_half; // Make sure R.id.guideline_half is valid
+            lp.topToBottom = R.id.guideline_half;
             bottom.setLayoutParams(lp);
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             WindowInsetsController ic = window.getInsetsController();
-            if (ic != null) {
+            if (ic != null)
                 ic.show(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
-            }
         } else {
-            window.getDecorView()
-                    .setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+            window.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
         }
     }
-
 
     private void toggleFullscreen() {
         if (isFullscreen) exitFullscreen();
@@ -459,12 +532,9 @@ public class HomeFragment extends Fragment {
             exoPlayer.release();
             exoPlayer = null;
         }
-        // 在 onDestroyView 中调用 ApkDownloader 的 cleanup 方法
         if (apkDownloader != null) {
-            //Gemini说要在这里清除，但是Chatgpt说不要，暂时听chatgpt的
-            //apkDownloader.cleanup();
+            // apkDownloader.cleanup();
         }
-        // 将视图成员变量置空，帮助GC，防止内存泄漏
         playerView = null;
         imageView = null;
         recyclerView = null;
@@ -472,21 +542,17 @@ public class HomeFragment extends Fragment {
         btnLogin = null;
         btnRoot = null;
         btnGo = null;
-        // trackSelector 可能也需要某种形式的清理或置空，具体取决于其实现
         trackSelector = null;
     }
 
     private void downloadAndInstallApk(String url, String fileName) {
         if (apkDownloader != null) {
-            // 使用 requireActivity() 作为 Context，因为它是一个 Activity Context，
-            // ApkDownloader 中的 downloadAndInstallApk 方法需要它来显示 Toast 和启动安装程序。
-            if (isAdded() && getActivity() != null) { // 确保 Fragment 仍然附加到 Activity
+            if (isAdded() && getActivity() != null) {
                 apkDownloader.downloadAndInstallApk(url, fileName, requireActivity());
             } else {
                 Log.e(TAG, "Fragment not attached to an activity, cannot start download.");
             }
         } else {
-            // 这种情况理论上不应该发生，因为我们在 onAttach 中初始化了 apkDownloader
             Log.e(TAG, "ApkDownloader not initialized!");
             if (isAdded() && getContext() != null) {
                 Toast.makeText(getContext(), "下载器服务未准备好", Toast.LENGTH_SHORT).show();
