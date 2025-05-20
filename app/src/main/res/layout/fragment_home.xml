@@ -2,29 +2,28 @@
 <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:clipToPadding="false">
 
-    <!-- 50% 水平分隔线 -->
-    <androidx.constraintlayout.widget.Guideline
+    <View
         android:id="@+id/guideline_half"
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        app:layout_constraintGuide_percent="0.5" />
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintGuide_percent="0.5"
+        app:layout_constraintTop_toTopOf="parent" />
 
-    <!-- **1. 把所有非播放 UI（登录/列表/按钮）包到这里** -->
     <LinearLayout
-        android:id="@+id/controls_container"
+        android:id="@+id/top_container"
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:orientation="vertical"
-        android:padding="8dp"
-        app:layout_constraintBottom_toTopOf="@id/guideline_half"
+        app:layout_constraintBottom_toTopOf="@+id/guideline_half"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent">
 
-        <!-- 按钮行 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -32,70 +31,58 @@
 
             <Button
                 android:id="@+id/btnLogin"
-                android:layout_width="0dp"
+
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_weight="2"
-                android:text="登录OneDrive" />
+                android:text="@string/login_button_text" />
 
             <Button
                 android:id="@+id/btnRoot"
-                android:layout_width="0dp"
+
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_weight="1.5"
-                android:text="根目录" />
+                android:text="@string/root_button_text" />
 
             <Button
                 android:id="@+id/btnGo"
-                android:layout_width="0dp"
+
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="播放" />
+                android:text="@string/go_button_text" />
         </LinearLayout>
 
-        <!-- 列表，占满剩余空间 -->
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/recyclerView"
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_weight="1"
-            android:overScrollMode="always"
-            android:scrollbars="vertical" />
-
+            android:layout_weight="1" />
     </LinearLayout>
 
-    <!-- 2. 播放区单独放这儿，方便拉伸／居中 -->
     <FrameLayout
         android:id="@+id/bottom_container"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:background="#000"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/guideline_half">
-
-        <androidx.media3.ui.PlayerView
-            android:id="@+id/player_view"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            app:show_buffering="when_playing"
-            app:show_shuffle_button="true" />
+        app:layout_constraintTop_toTopOf="@+id/guideline_half">
 
         <ImageView
             android:id="@+id/imageView"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:scaleType="centerInside"
+            android:background="#000000"
+            android:contentDescription="@string/image_description"
+            android:scaleType="fitCenter"
             android:visibility="gone" />
 
-        <SeekBar
-            android:id="@+id/volume_seekbar"
+        <androidx.media3.ui.PlayerView
+            android:id="@+id/player_view"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:max="100"
-            android:progress="100"
-            android:visibility="gone" />
-
+            android:layout_height="match_parent"
+            android:background="#000000"
+            android:visibility="gone"
+            app:surface_type="texture_view" />
     </FrameLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

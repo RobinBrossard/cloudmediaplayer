@@ -79,6 +79,10 @@ dependencies {
     // Material 组件库（包含 BottomNavigationView）
     implementation libs.material.v1120
 
+    //图片显示 Glide 依赖
+    implementation 'com.github.bumptech.glide:glide:4.16.0'
+    annotationProcessor 'com.github.bumptech.glide:compiler:4.16.0'
+
     // 测试
     testImplementation libs.junit
     androidTestImplementation libs.ext.junit
