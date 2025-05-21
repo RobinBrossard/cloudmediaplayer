@@ -74,7 +74,7 @@
             android:background="#000000"
             android:contentDescription="@string/image_description"
             android:scaleType="fitCenter"
-            android:visibility="gone" />
+            android:visibility="visible" />
 
         <ImageView
             android:id="@+id/imageView2"
