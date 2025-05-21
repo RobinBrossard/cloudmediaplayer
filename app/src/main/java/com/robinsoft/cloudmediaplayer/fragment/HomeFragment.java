@@ -91,18 +91,14 @@ public class HomeFragment extends Fragment {
     private ProgressBar downloadProgressBar;
     private TextView downloadProgressText;
 
-    // --- MODIFICATION START ---
-    private Handler mainThreadHandler; // To post results back to the main thread
-    // --- MODIFICATION END ---
+    private Handler mainThreadHandler;
 
 
     @Override
     public void onAttach(@NonNull Context context) {
         super.onAttach(context);
         apkDownloader = ApkDownloader.getInstance(context.getApplicationContext());
-        // --- MODIFICATION START ---
         mainThreadHandler = new Handler(Looper.getMainLooper());
-        // --- MODIFICATION END ---
     }
 
     @Nullable
@@ -168,14 +164,9 @@ public class HomeFragment extends Fragment {
         topContainer = view.findViewById(R.id.top_container);
         bottomContainer = view.findViewById(R.id.bottom_container);
 
-        // downloadProgressBar = view.findViewById(R.id.apk_download_progress_bar);
-        // downloadProgressText = view.findViewById(R.id.apk_download_progress_text);
-        // if (downloadProgressBar != null) downloadProgressBar.setVisibility(View.GONE);
-        // if (downloadProgressText != null) downloadProgressText.setVisibility(View.GONE);
-
-
         if (bottomContainer != null) {
             originalBottomContainerLayoutParams = (ConstraintLayout.LayoutParams) bottomContainer.getLayoutParams();
+            Log.d(TAG, "onViewCreated: Captured originalBottomContainerLayoutParams.");
         } else {
             Log.e(TAG, "onViewCreated: Fragment's R.id.bottom_container not found!");
         }
@@ -236,7 +227,9 @@ public class HomeFragment extends Fragment {
                     if (exoPlayer != null && exoPlayer.isPlaying()) exoPlayer.pause();
                     playerView.setVisibility(View.GONE);
                     imageView.setVisibility(View.VISIBLE);
-                    loadImage(url, true);
+                    // --- MODIFICATION START: Update loadImage call ---
+                    loadImage(url, true, false); // true for potential fullscreen, false for autoPlayTimer
+                    // --- MODIFICATION END ---
                     break;
                 case VIDEO:
                     imageView.setVisibility(View.GONE);
@@ -332,40 +325,35 @@ public class HomeFragment extends Fragment {
 
         mediaService.listMedia(dirIdToPlay)
                 .observe(getViewLifecycleOwner(), items -> {
-                    // --- MODIFICATION START ---
-                    if (!isAutoPlaying || !isAdded()) { // Check before starting background work
+                    if (!isAutoPlaying || !isAdded()) {
                         return;
                     }
                     if (items == null) {
                         Log.d(TAG, "AutoPlay: listMedia returned null items for dirId: " + dirIdToPlay + ". Proceeding to next in stack.");
-                        if (mainThreadHandler != null) { // Ensure handler is available
-                            mainThreadHandler.post(this::startAutoPlay); // Try next directory on main thread
+                        if (mainThreadHandler != null) {
+                            mainThreadHandler.post(this::startAutoPlay);
                         }
                         return;
                     }
 
-                    // Offload list processing to a background thread
                     new Thread(() -> {
                         final List<String> localChildDirs = new ArrayList<>();
                         final List<CloudMediaItem> localFilesToPlay = new ArrayList<>();
 
-                        for (CloudMediaItem it : items) { // Iterate over the 'items' copy
+                        for (CloudMediaItem it : items) {
                             if (it.getType() == CloudMediaItem.MediaType.FOLDER) {
                                 localChildDirs.add(it.getId());
                             } else if (it.getType() == CloudMediaItem.MediaType.IMAGE || it.getType() == CloudMediaItem.MediaType.VIDEO) {
                                 localFilesToPlay.add(it);
                             }
                         }
-                        // Use Collections.sort for compatibility with various List implementations
                         Collections.sort(localFilesToPlay, Comparator.comparing(CloudMediaItem::getLastModifiedDateTime));
 
-                        // Post back to main thread to update UI and continue logic
                         if (mainThreadHandler != null) {
                             mainThreadHandler.post(() -> {
-                                if (!isAutoPlaying || !isAdded()) { // Double check state on main thread
+                                if (!isAutoPlaying || !isAdded()) {
                                     return;
                                 }
-                                // Update autoPlayStack (from back to front for correct pop order)
                                 for (int i = localChildDirs.size() - 1; i >= 0; i--) {
                                     autoPlayStack.push(localChildDirs.get(i));
                                 }
@@ -373,7 +361,6 @@ public class HomeFragment extends Fragment {
                             });
                         }
                     }).start();
-                    // --- MODIFICATION END ---
                 });
     }
 
@@ -399,7 +386,7 @@ public class HomeFragment extends Fragment {
             if (tempOnAllDone != null) {
                 tempOnAllDone.run();
             } else {
-                startAutoPlay(); // Fallback if onAllDone was null
+                startAutoPlay();
             }
         }
     }
@@ -409,8 +396,8 @@ public class HomeFragment extends Fragment {
             Log.d(TAG, "AutoPlay: playFilesSequentially called but auto-play is off or fragment not added.");
             return;
         }
-        this.currentAutoPlayFiles = new ArrayList<>(files); // Create a copy
-        this.currentAutoPlayIndex = -1; // Will be incremented to 0 by handleAutoPlayNextFile
+        this.currentAutoPlayFiles = new ArrayList<>(files);
+        this.currentAutoPlayIndex = -1;
         this.currentAutoPlayOnAllDone = onAllDone;
 
         Log.d(TAG, "AutoPlay: Starting sequential play for " + files.size() + " files.");
@@ -423,10 +410,10 @@ public class HomeFragment extends Fragment {
             if (tempOnAllDone != null) {
                 tempOnAllDone.run();
             } else {
-                startAutoPlay(); // Fallback
+                startAutoPlay();
             }
         } else {
-            handleAutoPlayNextFile(); // Start playing the first file
+            handleAutoPlayNextFile();
         }
     }
 
@@ -435,12 +422,12 @@ public class HomeFragment extends Fragment {
             Log.d(TAG, "AutoPlay: playFileAtIndex called but auto-play is off or fragment not added.");
             return;
         }
-        if (files == null || idx >= files.size() || idx < 0) { // Robust check
+        if (files == null || idx >= files.size() || idx < 0) {
             Log.w(TAG, "AutoPlay: Invalid files list or index in playFileAtIndex. Index: " + idx + ", Files size: " + (files == null ? "null" : files.size()));
             if (onAllDone != null) {
                 onAllDone.run();
             } else {
-                startAutoPlay(); // Fallback
+                startAutoPlay();
             }
             return;
         }
@@ -459,32 +446,28 @@ public class HomeFragment extends Fragment {
         if (item.getType() == CloudMediaItem.MediaType.IMAGE) {
             if (playerView != null) playerView.setVisibility(View.GONE);
             if (imageView != null) imageView.setVisibility(View.VISIBLE);
-            loadImage(url, false);
 
-            if (imageView != null && autoPlayImageRunnable != null) {
-                // --- MODIFICATION START ---
-                // Ensure runnable is removed from the correct handler
+            // --- MODIFICATION START: Define autoPlayImageRunnable here for clarity if not already a field ---
+            // (It's already a field, so this is fine)
+            // autoPlayImageRunnable = () -> { ... }; // This is already a field
+            // --- MODIFICATION END ---
+
+            // --- MODIFICATION START: Update loadImage call and remove postDelayed from here ---
+            loadImage(url, false, true); // false for sizing, true for autoPlayTimer
+            // The postDelayed logic is now INSIDE loadImage's onResourceReady
+            // --- MODIFICATION END ---
+
+        } else if (item.getType() == CloudMediaItem.MediaType.VIDEO) {
+            // --- MODIFICATION START: Ensure any pending image auto-play runnable is cancelled when switching to video ---
+            if (autoPlayImageRunnable != null) {
                 if (mainThreadHandler != null) {
                     mainThreadHandler.removeCallbacks(autoPlayImageRunnable);
-                } else if (imageView != null) { // Fallback for older logic, though mainThreadHandler is preferred
+                } else if (imageView != null) {
                     imageView.removeCallbacks(autoPlayImageRunnable);
                 }
-                // --- MODIFICATION END ---
-            }
-            autoPlayImageRunnable = () -> {
-                if (isAutoPlaying && isAdded()) {
-                    handleAutoPlayNextFile();
-                }
-            };
-            // --- MODIFICATION START ---
-            // Use mainThreadHandler for posting delayed tasks
-            if (mainThreadHandler != null) {
-                mainThreadHandler.postDelayed(autoPlayImageRunnable, 3_000);
-            } else if (imageView != null) { // Fallback
-                imageView.postDelayed(autoPlayImageRunnable, 3_000);
+                // autoPlayImageRunnable = null; // No need to nullify here, just remove callbacks
             }
             // --- MODIFICATION END ---
-        } else if (item.getType() == CloudMediaItem.MediaType.VIDEO) {
             if (imageView != null) imageView.setVisibility(View.GONE);
             if (playerView != null) playerView.setVisibility(View.VISIBLE);
             if (exoPlayer != null) {
@@ -530,36 +513,50 @@ public class HomeFragment extends Fragment {
             exoPlayer.clearMediaItems();
         }
         if (autoPlayImageRunnable != null) {
-            // --- MODIFICATION START ---
             if (mainThreadHandler != null) {
                 mainThreadHandler.removeCallbacks(autoPlayImageRunnable);
-            } else if (imageView != null) { // Fallback
+            } else if (imageView != null) {
                 imageView.removeCallbacks(autoPlayImageRunnable);
             }
-            autoPlayImageRunnable = null;
-            // --- MODIFICATION END ---
+            // Keep autoPlayImageRunnable instance, just remove callbacks.
+            // It will be redefined in playFileAtIndex if needed.
         }
         currentAutoPlayFiles = null;
         currentAutoPlayIndex = -1;
         currentAutoPlayOnAllDone = null;
     }
 
-    private void loadImage(String url, boolean loadForPotentialFullscreen) {
+    // --- MODIFICATION START: Modify loadImage signature and add timer logic ---
+    private void loadImage(String url, boolean loadForPotentialFullscreen, final boolean isForAutoPlayTimer) {
+        // --- MODIFICATION END ---
         if (!isAdded() || getContext() == null || imageView == null) {
             Log.w(TAG, "loadImage: Fragment not ready or ImageView is null.");
             return;
         }
         final String finalUrl = prepareMediaUrl(url);
-        // final Context safeContext = getContext(); // Using 'this' for Glide in Fragment is fine
 
         RequestListener<Drawable> glideListener = new RequestListener<Drawable>() {
             @Override
             public boolean onLoadFailed(@Nullable GlideException e, Object model, Target<Drawable> target, boolean isFirstResource) {
                 Log.e(TAG, "Glide: Failed to load image: " + finalUrl, e);
-                if (isAdded() && getContext() != null && imageView != null) { // getContext() for Toast
-                    // Toast.makeText(getContext(), "加载图片失败", Toast.LENGTH_SHORT).show(); // Already handled by Glide's error drawable
+                if (isAdded() && getContext() != null && imageView != null) {
                     if (playerView != null) playerView.setVisibility(View.GONE);
                     imageView.setVisibility(View.VISIBLE);
+                    // --- MODIFICATION START: If auto-play image fails, still try to advance ---
+                    // This prevents getting stuck on a failed image load during auto-play.
+                    if (isForAutoPlayTimer && isAutoPlaying && isAdded()) {
+                        Log.w(TAG, "AutoPlay: Image load failed, attempting to play next file.");
+                        // We can directly call handleAutoPlayNextFile or post it to avoid deep recursion
+                        // if multiple failures happen quickly. Posting is safer.
+                        if (mainThreadHandler != null) {
+                            mainThreadHandler.post(() -> {
+                                if (isAutoPlaying && isAdded()) { // Re-check state
+                                    handleAutoPlayNextFile();
+                                }
+                            });
+                        }
+                    }
+                    // --- MODIFICATION END ---
                 }
                 return false;
             }
@@ -571,12 +568,34 @@ public class HomeFragment extends Fragment {
                     if (playerView != null) {
                         playerView.setVisibility(View.GONE);
                     }
+
+                    // --- MODIFICATION START: Add timer logic here ---
+                    if (isForAutoPlayTimer && isAutoPlaying) { // Check isAutoPlaying again, it might have been stopped
+                        Log.d(TAG, "AutoPlay: Image resource ready, starting 3s timer for " + finalUrl);
+                        if (autoPlayImageRunnable == null) { // Define if null, though it should be defined in playFileAtIndex
+                            autoPlayImageRunnable = () -> {
+                                if (isAutoPlaying && isAdded()) {
+                                    handleAutoPlayNextFile();
+                                }
+                            };
+                        }
+
+                        // Remove any previously posted runnable for safety, then post new one
+                        if (mainThreadHandler != null) {
+                            mainThreadHandler.removeCallbacks(autoPlayImageRunnable);
+                            mainThreadHandler.postDelayed(autoPlayImageRunnable, 3_000);
+                        } else if (imageView != null) { // Fallback, less ideal
+                            imageView.removeCallbacks(autoPlayImageRunnable);
+                            imageView.postDelayed(autoPlayImageRunnable, 3_000);
+                        }
+                    }
+                    // --- MODIFICATION END ---
                 }
                 return false;
             }
         };
 
-        if (loadForPotentialFullscreen && !isAutoPlaying) {
+        if (loadForPotentialFullscreen && !isAutoPlaying) { // This condition implies manual click
             DisplayMetrics displayMetrics = new DisplayMetrics();
             Activity activity = getActivity();
             if (activity != null) {
@@ -602,7 +621,7 @@ public class HomeFragment extends Fragment {
                         .transition(DrawableTransitionOptions.withCrossFade(200))
                         .fitCenter().diskCacheStrategy(DiskCacheStrategy.AUTOMATIC).listener(glideListener).into(imageView);
             }
-        } else { // Auto-play or non-fullscreen initial load
+        } else { // Auto-play or non-fullscreen initial load (where loadForPotentialFullscreen is false)
             Log.d(TAG, "Glide: Loading image with automatic sizing (auto-play or non-fullscreen initial): " + finalUrl);
             Glide.with(this)
                     .load(finalUrl)
@@ -630,7 +649,6 @@ public class HomeFragment extends Fragment {
             ConstraintLayout.LayoutParams lp = (ConstraintLayout.LayoutParams) bottomContainer.getLayoutParams();
             lp.topToTop = ConstraintLayout.LayoutParams.PARENT_ID;
             lp.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID;
-            // Ensure width and height are match_parent for fullscreen
             lp.width = ConstraintLayout.LayoutParams.MATCH_PARENT;
             lp.height = ConstraintLayout.LayoutParams.MATCH_PARENT;
             bottomContainer.setLayoutParams(lp);
@@ -647,24 +665,18 @@ public class HomeFragment extends Fragment {
             topContainer.setVisibility(View.VISIBLE);
         }
 
-        // --- MODIFICATION START: Revert exitFullscreen to a simpler, direct constraint setting ---
         if (bottomContainer != null) {
-            Log.d(TAG, "exitFullscreen: Reverting to direct constraint setting for non-fullscreen.");
+            Log.d(TAG, "exitFullscreen: Applying user's specified non-fullscreen constraints.");
             ConstraintLayout.LayoutParams lp = (ConstraintLayout.LayoutParams) bottomContainer.getLayoutParams();
 
-
-            lp.topToTop = R.id.guideline_half; // Assuming this is your non-fullscreen top constraint
-            lp.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID; // Assuming it's constrained to parent bottom
-
-
-            lp.width = ConstraintLayout.LayoutParams.MATCH_CONSTRAINT; // 0dp
-            lp.height = ConstraintLayout.LayoutParams.MATCH_CONSTRAINT; // 0dp, or a specific aspect ratio height
-
+            lp.topToTop = R.id.guideline_half;
+            lp.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID;
+            lp.width = ConstraintLayout.LayoutParams.MATCH_CONSTRAINT;
+            lp.height = ConstraintLayout.LayoutParams.MATCH_CONSTRAINT;
 
             bottomContainer.setLayoutParams(lp);
-            bottomContainer.requestLayout(); // Crucial to apply new layout parameters
+            bottomContainer.requestLayout();
         }
-        // --- MODIFICATION END ---
 
         View activityBottomNav = activity.findViewById(R.id.bottom_nav);
         if (activityBottomNav != null) {
@@ -683,18 +695,21 @@ public class HomeFragment extends Fragment {
         super.onDestroyView();
         Log.d(TAG, "onDestroyView called");
 
-        if (isAutoPlaying) { // Ensure autoPlay is stopped
+        if (isAutoPlaying) {
             stopAutoPlay();
-        } else { // If not auto-playing, still ensure any pending image runnable is cleared
+        } else {
             if (autoPlayImageRunnable != null) {
                 if (mainThreadHandler != null) {
                     mainThreadHandler.removeCallbacks(autoPlayImageRunnable);
-                } else if (imageView != null) { // Fallback
+                } else if (imageView != null) {
                     imageView.removeCallbacks(autoPlayImageRunnable);
                 }
-                autoPlayImageRunnable = null;
+                // autoPlayImageRunnable = null; // Nullify in stopAutoPlay or here
             }
         }
+        // Ensure autoPlayImageRunnable is nulled if not handled by stopAutoPlay
+        autoPlayImageRunnable = null;
+
 
         if (exoPlayer != null) {
             if (exoPlayerListener != null) {
@@ -703,20 +718,10 @@ public class HomeFragment extends Fragment {
             exoPlayer.release();
             exoPlayer = null;
         }
-        // apkDownloader cleanup is a no-op, so can be omitted if desired
-        // if (apkDownloader != null) {
-        //     apkDownloader.cleanup();
-        // }
 
-        // --- MODIFICATION START ---
-        // Clear handler callbacks in onDestroyView to prevent leaks if fragment is destroyed but handler still has messages
         if (mainThreadHandler != null) {
             mainThreadHandler.removeCallbacksAndMessages(null);
-            // Don't null out mainThreadHandler here if it's re-created in onAttach.
-            // If it's tied to fragment lifecycle, it will be GC'd with fragment.
-            // Or, null it out in onDetach.
         }
-        // --- MODIFICATION END ---
 
         playerView = null;
         imageView = null;
@@ -732,21 +737,19 @@ public class HomeFragment extends Fragment {
         currentAutoPlayOnAllDone = null;
         topContainer = null;
         bottomContainer = null;
+        originalBottomContainerLayoutParams = null;
         downloadProgressBar = null;
         downloadProgressText = null;
     }
 
-    // --- MODIFICATION START ---
     @Override
     public void onDetach() {
         super.onDetach();
-        // Clean up handler here as well, as Fragment is detaching from Activity
         if (mainThreadHandler != null) {
             mainThreadHandler.removeCallbacksAndMessages(null);
-            mainThreadHandler = null; // Good practice to nullify here
+            mainThreadHandler = null;
         }
     }
-    // --- MODIFICATION END ---
 
     private void checkStoragePermissionAndDownloadApk(String url, String fileName) {
         this.pendingApkUrl = url;
@@ -768,12 +771,10 @@ public class HomeFragment extends Fragment {
     private void proceedWithApkDownload(String url, String fileName) {
         if (!isAdded() || getActivity() == null) {
             Log.w(TAG, "proceedWithApkDownload: Fragment not added or activity is null.");
-            if (downloadProgressBar != null)
-                downloadProgressBar.setVisibility(View.GONE); // Reset UI
+            if (downloadProgressBar != null) downloadProgressBar.setVisibility(View.GONE);
             if (downloadProgressText != null) downloadProgressText.setVisibility(View.GONE);
             return;
         }
-        // Activity activity = getActivity(); // Already checked getActivity() != null
 
         if (apkDownloader != null) {
             if (downloadProgressBar != null) downloadProgressBar.setVisibility(View.VISIBLE);
@@ -805,7 +806,6 @@ public class HomeFragment extends Fragment {
                             downloadProgressBar.setVisibility(View.GONE);
                         if (downloadProgressText != null) {
                             downloadProgressText.setText("下载失败");
-                            // Consider hiding after a delay or on next action
                         }
                     }
                 }
@@ -861,7 +861,6 @@ public class HomeFragment extends Fragment {
                 if (downloadProgressBar != null) downloadProgressBar.setVisibility(View.GONE);
                 if (downloadProgressText != null) {
                     downloadProgressText.setText("权限被拒绝");
-                    // downloadProgressText.setVisibility(View.GONE); // Optionally hide after a delay
                 }
             }
             pendingApkUrl = null;
