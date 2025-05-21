@@ -41,7 +41,6 @@ import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.DataSource;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
 import com.bumptech.glide.load.engine.GlideException;
-import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions;
 import com.bumptech.glide.request.RequestListener;
 import com.bumptech.glide.request.target.Target;
 import com.robinsoft.cloudmediaplayer.R;
@@ -68,7 +67,11 @@ public class HomeFragment extends Fragment {
     private DefaultTrackSelector trackSelector;
     private ExoPlayer exoPlayer;
     private PlayerView playerView;
-    private ImageView imageView;
+    // --- MODIFICATION START: ImageView changes for double buffering ---
+    private ImageView imageView1; // Was 'imageView'
+    private ImageView imageView2;
+    private ImageView activeImageView; // Tracks the currently visible ImageView
+    // --- MODIFICATION END ---
     private RecyclerView recyclerView;
     private Button btnLogin, btnRoot, btnGo;
     private boolean isFullscreen = false;
@@ -92,6 +95,7 @@ public class HomeFragment extends Fragment {
     private TextView downloadProgressText;
 
     private Handler mainThreadHandler;
+    private long autoPlayImageDisplayDurationMs = 5000L;
 
 
     @Override
@@ -149,6 +153,15 @@ public class HomeFragment extends Fragment {
         return originalUrl;
     }
 
+    public void setAutoPlayImageDisplayDuration(long durationMs) {
+        if (durationMs > 0) {
+            this.autoPlayImageDisplayDurationMs = durationMs;
+            Log.d(TAG, "Auto-play image display duration set to: " + durationMs + "ms");
+        } else {
+            Log.w(TAG, "Attempted to set invalid auto-play image display duration: " + durationMs + "ms");
+        }
+    }
+
 
     @UnstableApi
     @Override
@@ -159,7 +172,21 @@ public class HomeFragment extends Fragment {
         btnRoot = view.findViewById(R.id.btnRoot);
         btnGo = view.findViewById(R.id.btnGo);
         recyclerView = view.findViewById(R.id.recyclerView);
-        imageView = view.findViewById(R.id.imageView);
+        // --- MODIFICATION START: Initialize both ImageViews ---
+        imageView1 = view.findViewById(R.id.imageView1); // Ensure this ID exists in your XML
+        imageView2 = view.findViewById(R.id.imageView2); // Ensure this ID exists in your XML
+
+        if (imageView1 == null || imageView2 == null) {
+            Log.e(TAG, "One or both ImageViews not found in layout! Check R.id.imageView1 and R.id.imageView2.");
+            // Handle error appropriately, maybe show a toast or disable image features
+            Toast.makeText(getContext(), "Image views not found, image features disabled.", Toast.LENGTH_LONG).show();
+            // You might want to return or disable parts of the UI if ImageViews are critical
+        } else {
+            activeImageView = imageView1; // imageView1 is initially active
+            imageView1.setVisibility(View.VISIBLE);
+            imageView2.setVisibility(View.GONE);
+        }
+        // --- MODIFICATION END ---
         playerView = view.findViewById(R.id.player_view);
         topContainer = view.findViewById(R.id.top_container);
         bottomContainer = view.findViewById(R.id.bottom_container);
@@ -212,6 +239,10 @@ public class HomeFragment extends Fragment {
 
         adapter.setOnItemClickListener(item -> {
             if (!isAdded() || getContext() == null) return;
+            if (imageView1 == null || imageView2 == null) { // Safety check
+                Log.e(TAG, "ImageViews not initialized, cannot process click.");
+                return;
+            }
 
             if (item.getType() == CloudMediaItem.MediaType.FOLDER) {
                 if (exoPlayer != null && exoPlayer.isPlaying()) exoPlayer.pause();
@@ -226,13 +257,20 @@ public class HomeFragment extends Fragment {
                 case IMAGE:
                     if (exoPlayer != null && exoPlayer.isPlaying()) exoPlayer.pause();
                     playerView.setVisibility(View.GONE);
-                    imageView.setVisibility(View.VISIBLE);
-                    // --- MODIFICATION START: Update loadImage call ---
-                    loadImage(url, true, false); // true for potential fullscreen, false for autoPlayTimer
+                    // --- MODIFICATION START: Manual image click uses double buffering too ---
+                    // Determine target for manual click (the non-active one, then swap)
+                    ImageView targetManualImageView = (activeImageView == imageView1) ? imageView2 : imageView1;
+                    if (autoPlayImageRunnable != null && mainThreadHandler != null) { // Cancel any auto-play timer
+                        mainThreadHandler.removeCallbacks(autoPlayImageRunnable);
+                    }
+                    loadImage(url, true, false, targetManualImageView); // false for autoPlayTimer
                     // --- MODIFICATION END ---
                     break;
                 case VIDEO:
-                    imageView.setVisibility(View.GONE);
+                    // --- MODIFICATION START: Ensure ImageViews are hidden when video plays ---
+                    if (imageView1 != null) imageView1.setVisibility(View.GONE);
+                    if (imageView2 != null) imageView2.setVisibility(View.GONE);
+                    // --- MODIFICATION END ---
                     playerView.setVisibility(View.VISIBLE);
                     if (exoPlayer != null) {
                         exoPlayer.stop();
@@ -273,6 +311,7 @@ public class HomeFragment extends Fragment {
         });
 
         btnGo.setOnClickListener(v -> {
+            if (currentDirId == null) return;
             if (!isAutoPlaying) {
                 autoRootId = currentDirId;
                 autoPlayStack.clear();
@@ -302,7 +341,10 @@ public class HomeFragment extends Fragment {
             }
         };
         playerView.setOnClickListener(mediaViewClickListener);
-        imageView.setOnClickListener(mediaViewClickListener);
+        // --- MODIFICATION START: Attach click listener to both ImageViews ---
+        if (imageView1 != null) imageView1.setOnClickListener(mediaViewClickListener);
+        if (imageView2 != null) imageView2.setOnClickListener(mediaViewClickListener);
+        // --- MODIFICATION END ---
     }
 
     private void startAutoPlay() {
@@ -366,6 +408,11 @@ public class HomeFragment extends Fragment {
 
     private void handleAutoPlayNextFile() {
         if (!isAutoPlaying || !isAdded()) return;
+
+        if (autoPlayImageRunnable != null && mainThreadHandler != null) {
+            Log.d(TAG, "handleAutoPlayNextFile: Removing existing autoPlayImageRunnable before advancing.");
+            mainThreadHandler.removeCallbacks(autoPlayImageRunnable);
+        }
 
         if (currentAutoPlayFiles == null || currentAutoPlayOnAllDone == null) {
             Log.d(TAG, "AutoPlay: handleAutoPlayNextFile called but no current auto-play sequence info. Attempting to process next directory.");
@@ -431,6 +478,11 @@ public class HomeFragment extends Fragment {
             }
             return;
         }
+        if (imageView1 == null || imageView2 == null) { // Safety check for ImageViews
+            Log.e(TAG, "AutoPlay: ImageViews not initialized in playFileAtIndex.");
+            stopAutoPlay(); // Stop if UI is not ready
+            return;
+        }
 
         this.currentAutoPlayFiles = files;
         this.currentAutoPlayIndex = idx;
@@ -441,34 +493,29 @@ public class HomeFragment extends Fragment {
 
         Log.d(TAG, "AutoPlay: Playing file " + item.getName() + " at index " + idx);
 
+        if (autoPlayImageRunnable != null && mainThreadHandler != null) {
+            Log.d(TAG, "playFileAtIndex: Removing previous autoPlayImageRunnable.");
+            mainThreadHandler.removeCallbacks(autoPlayImageRunnable);
+        }
+
         preloadNextAutoPlayImageIfApplicable();
 
         if (item.getType() == CloudMediaItem.MediaType.IMAGE) {
-            if (playerView != null) playerView.setVisibility(View.GONE);
-            if (imageView != null) imageView.setVisibility(View.VISIBLE);
-
-            // --- MODIFICATION START: Define autoPlayImageRunnable here for clarity if not already a field ---
-            // (It's already a field, so this is fine)
-            // autoPlayImageRunnable = () -> { ... }; // This is already a field
-            // --- MODIFICATION END ---
-
-            // --- MODIFICATION START: Update loadImage call and remove postDelayed from here ---
-            loadImage(url, false, true); // false for sizing, true for autoPlayTimer
-            // The postDelayed logic is now INSIDE loadImage's onResourceReady
+            playerView.setVisibility(View.GONE);
+            // --- MODIFICATION START: Determine target ImageView for buffering ---
+            ImageView targetImageView = (activeImageView == imageView1) ? imageView2 : imageView1;
+            Log.d(TAG, "AutoPlay: Loading image into " + (targetImageView == imageView1 ? "imageView1" : "imageView2"));
+            // Ensure the target (back) image view is ready to receive image, but might be GONE initially
+            // Glide will handle making it visible in onResourceReady if it loads successfully.
+            // The activeImageView remains visible with the old image.
+            loadImage(url, false, true, targetImageView);
             // --- MODIFICATION END ---
 
         } else if (item.getType() == CloudMediaItem.MediaType.VIDEO) {
-            // --- MODIFICATION START: Ensure any pending image auto-play runnable is cancelled when switching to video ---
-            if (autoPlayImageRunnable != null) {
-                if (mainThreadHandler != null) {
-                    mainThreadHandler.removeCallbacks(autoPlayImageRunnable);
-                } else if (imageView != null) {
-                    imageView.removeCallbacks(autoPlayImageRunnable);
-                }
-                // autoPlayImageRunnable = null; // No need to nullify here, just remove callbacks
-            }
+            // --- MODIFICATION START: Hide both ImageViews when video plays ---
+            if (imageView1 != null) imageView1.setVisibility(View.GONE);
+            if (imageView2 != null) imageView2.setVisibility(View.GONE);
             // --- MODIFICATION END ---
-            if (imageView != null) imageView.setVisibility(View.GONE);
             if (playerView != null) playerView.setVisibility(View.VISIBLE);
             if (exoPlayer != null) {
                 exoPlayer.stop();
@@ -515,78 +562,101 @@ public class HomeFragment extends Fragment {
         if (autoPlayImageRunnable != null) {
             if (mainThreadHandler != null) {
                 mainThreadHandler.removeCallbacks(autoPlayImageRunnable);
-            } else if (imageView != null) {
-                imageView.removeCallbacks(autoPlayImageRunnable);
             }
-            // Keep autoPlayImageRunnable instance, just remove callbacks.
-            // It will be redefined in playFileAtIndex if needed.
         }
+        autoPlayImageRunnable = null;
         currentAutoPlayFiles = null;
         currentAutoPlayIndex = -1;
         currentAutoPlayOnAllDone = null;
     }
 
-    // --- MODIFICATION START: Modify loadImage signature and add timer logic ---
-    private void loadImage(String url, boolean loadForPotentialFullscreen, final boolean isForAutoPlayTimer) {
+    // --- MODIFICATION START: Modify loadImage signature and logic for double buffering ---
+    private void loadImage(String url, boolean loadForPotentialFullscreen, final boolean isForAutoPlayTimer, final ImageView targetImageView) {
         // --- MODIFICATION END ---
-        if (!isAdded() || getContext() == null || imageView == null) {
-            Log.w(TAG, "loadImage: Fragment not ready or ImageView is null.");
+        if (!isAdded() || getContext() == null || targetImageView == null) { // Check targetImageView
+            Log.w(TAG, "loadImage: Fragment not ready, ImageView is null, or targetImageView is null.");
+            // If it's an auto-play scenario and loading fails here, try to advance
+            if (isForAutoPlayTimer && isAutoPlaying && isAdded() && mainThreadHandler != null) {
+                Log.w(TAG, "loadImage: Pre-condition failed for auto-play image, trying next.");
+                mainThreadHandler.post(this::handleAutoPlayNextFile);
+            }
             return;
         }
         final String finalUrl = prepareMediaUrl(url);
 
+        // If this load is for an auto-play timer, ensure any *globally* pending timer is cleared.
+        // The more specific cancellation (for the *active* view's timer) happens in playFileAtIndex.
+        if (isForAutoPlayTimer && autoPlayImageRunnable != null && mainThreadHandler != null) {
+            // This might be redundant if playFileAtIndex always cancels, but good as a safeguard.
+            // mainThreadHandler.removeCallbacks(autoPlayImageRunnable);
+        }
+
+
         RequestListener<Drawable> glideListener = new RequestListener<Drawable>() {
             @Override
             public boolean onLoadFailed(@Nullable GlideException e, Object model, Target<Drawable> target, boolean isFirstResource) {
-                Log.e(TAG, "Glide: Failed to load image: " + finalUrl, e);
-                if (isAdded() && getContext() != null && imageView != null) {
-                    if (playerView != null) playerView.setVisibility(View.GONE);
-                    imageView.setVisibility(View.VISIBLE);
-                    // --- MODIFICATION START: If auto-play image fails, still try to advance ---
-                    // This prevents getting stuck on a failed image load during auto-play.
+                Log.e(TAG, "Glide: Failed to load image into " + (targetImageView == imageView1 ? "imageView1" : "imageView2") + " URL: " + finalUrl, e);
+                if (isAdded() && getContext() != null) {
+                    // Don't hide the activeImageView if the background load fails
+                    // Toast.makeText(getContext(), "图片加载失败: " + finalUrl, Toast.LENGTH_SHORT).show();
                     if (isForAutoPlayTimer && isAutoPlaying && isAdded()) {
-                        Log.w(TAG, "AutoPlay: Image load failed, attempting to play next file.");
-                        // We can directly call handleAutoPlayNextFile or post it to avoid deep recursion
-                        // if multiple failures happen quickly. Posting is safer.
+                        Log.w(TAG, "AutoPlay: Image load failed for " + finalUrl + ", attempting to play next file.");
                         if (mainThreadHandler != null) {
                             mainThreadHandler.post(() -> {
-                                if (isAutoPlaying && isAdded()) { // Re-check state
+                                if (isAutoPlaying && isAdded()) {
                                     handleAutoPlayNextFile();
                                 }
                             });
                         }
                     }
-                    // --- MODIFICATION END ---
                 }
                 return false;
             }
 
             @Override
             public boolean onResourceReady(Drawable resource, Object model, Target<Drawable> target, DataSource dataSource, boolean isFirstResource) {
-                if (imageView != null && isAdded()) {
-                    imageView.setVisibility(View.VISIBLE);
-                    if (playerView != null) {
-                        playerView.setVisibility(View.GONE);
+                Log.d(TAG, "Glide: Image resource ready for " + (targetImageView == imageView1 ? "imageView1" : "imageView2") + " URL: " + finalUrl);
+                if (targetImageView != null && isAdded()) {
+
+                    // --- MODIFICATION START: Swap ImageViews and start timer ---
+                    if (playerView != null)
+                        playerView.setVisibility(View.GONE); // Ensure player is hidden
+
+                    ImageView previouslyActiveImageView = activeImageView;
+                    activeImageView = targetImageView; // The target view with the new image is now active
+
+                    activeImageView.setVisibility(View.VISIBLE);
+                    activeImageView.setAlpha(0f); // Prepare for fade-in
+                    activeImageView.animate().alpha(1f).setDuration(300).start(); // Fade-in new image
+
+                    if (previouslyActiveImageView != null && previouslyActiveImageView != activeImageView) {
+                        // Fade out the old image, then set to GONE
+                        previouslyActiveImageView.animate().alpha(0f).setDuration(300).withEndAction(() -> {
+                            if (previouslyActiveImageView != activeImageView) { // Double check it's not the current active one
+                                previouslyActiveImageView.setVisibility(View.GONE);
+                            }
+                        }).start();
+                    } else if (previouslyActiveImageView == activeImageView && imageView1 != null && imageView2 != null) {
+                        // This case occurs if it's the first image load or manual click directly into activeImageView
+                        // Ensure the other one is GONE
+                        ImageView otherImageView = (activeImageView == imageView1) ? imageView2 : imageView1;
+                        otherImageView.setVisibility(View.GONE);
+                        otherImageView.setAlpha(0f);
                     }
 
-                    // --- MODIFICATION START: Add timer logic here ---
-                    if (isForAutoPlayTimer && isAutoPlaying) { // Check isAutoPlaying again, it might have been stopped
-                        Log.d(TAG, "AutoPlay: Image resource ready, starting 3s timer for " + finalUrl);
-                        if (autoPlayImageRunnable == null) { // Define if null, though it should be defined in playFileAtIndex
-                            autoPlayImageRunnable = () -> {
-                                if (isAutoPlaying && isAdded()) {
-                                    handleAutoPlayNextFile();
-                                }
-                            };
-                        }
 
-                        // Remove any previously posted runnable for safety, then post new one
+                    if (isForAutoPlayTimer && isAutoPlaying) {
+                        Log.d(TAG, "AutoPlay: Image resource ready, starting " + autoPlayImageDisplayDurationMs + "ms timer for " + finalUrl);
+                        autoPlayImageRunnable = () -> {
+                            if (isAutoPlaying && isAdded()) {
+                                Log.d(TAG, "AutoPlay: " + autoPlayImageDisplayDurationMs + "ms timer expired for " + finalUrl + ", handling next file.");
+                                handleAutoPlayNextFile();
+                            }
+                        };
+
                         if (mainThreadHandler != null) {
                             mainThreadHandler.removeCallbacks(autoPlayImageRunnable);
-                            mainThreadHandler.postDelayed(autoPlayImageRunnable, 3_000);
-                        } else if (imageView != null) { // Fallback, less ideal
-                            imageView.removeCallbacks(autoPlayImageRunnable);
-                            imageView.postDelayed(autoPlayImageRunnable, 3_000);
+                            mainThreadHandler.postDelayed(autoPlayImageRunnable, autoPlayImageDisplayDurationMs);
                         }
                     }
                     // --- MODIFICATION END ---
@@ -595,43 +665,45 @@ public class HomeFragment extends Fragment {
             }
         };
 
-        if (loadForPotentialFullscreen && !isAutoPlaying) { // This condition implies manual click
+        // Determine which Glide call to use based on whether it's a manual click (loadForPotentialFullscreen)
+        // or an auto-play background load.
+        if (loadForPotentialFullscreen && !isForAutoPlayTimer) { // Manual click, potentially for fullscreen
             DisplayMetrics displayMetrics = new DisplayMetrics();
             Activity activity = getActivity();
             if (activity != null) {
                 activity.getWindowManager().getDefaultDisplay().getMetrics(displayMetrics);
                 int screenWidth = displayMetrics.widthPixels;
                 int screenHeight = displayMetrics.heightPixels;
-                Log.d(TAG, "Glide: Loading image for potential fullscreen: " + finalUrl + " with override " + screenWidth + "x" + screenHeight);
+                Log.d(TAG, "Glide: Loading image for potential fullscreen into " + (targetImageView == imageView1 ? "imageView1" : "imageView2") + " URL: " + finalUrl);
                 Glide.with(this)
                         .load(finalUrl)
                         .placeholder(R.drawable.ic_image_placeholder)
                         .error(R.drawable.ic_image_error)
-                        .transition(DrawableTransitionOptions.withCrossFade(200))
+                        // .transition(DrawableTransitionOptions.withCrossFade(200)) // Transition handled by alpha animation now
                         .override(screenWidth, screenHeight)
                         .fitCenter()
                         .diskCacheStrategy(DiskCacheStrategy.RESOURCE)
                         .listener(glideListener)
-                        .into(imageView);
+                        .into(targetImageView); // Load into the specified target
             } else {
-                Log.w(TAG, "Activity not available for getting screen dimensions. Loading with default Glide sizing.");
+                Log.w(TAG, "Activity not available for getting screen dimensions. Loading with default Glide sizing into " + (targetImageView == imageView1 ? "imageView1" : "imageView2"));
                 Glide.with(this).load(finalUrl)
                         .placeholder(R.drawable.ic_image_placeholder)
                         .error(R.drawable.ic_image_error)
-                        .transition(DrawableTransitionOptions.withCrossFade(200))
-                        .fitCenter().diskCacheStrategy(DiskCacheStrategy.AUTOMATIC).listener(glideListener).into(imageView);
+                        // .transition(DrawableTransitionOptions.withCrossFade(200))
+                        .fitCenter().diskCacheStrategy(DiskCacheStrategy.AUTOMATIC).listener(glideListener).into(targetImageView);
             }
-        } else { // Auto-play or non-fullscreen initial load (where loadForPotentialFullscreen is false)
-            Log.d(TAG, "Glide: Loading image with automatic sizing (auto-play or non-fullscreen initial): " + finalUrl);
+        } else { // Auto-play image load, or non-fullscreen initial load.
+            Log.d(TAG, "Glide: Loading image with automatic sizing into " + (targetImageView == imageView1 ? "imageView1" : "imageView2") + " URL: " + finalUrl);
             Glide.with(this)
                     .load(finalUrl)
                     .placeholder(R.drawable.ic_image_placeholder)
                     .error(R.drawable.ic_image_error)
-                    .transition(DrawableTransitionOptions.withCrossFade(200))
+                    // .transition(DrawableTransitionOptions.withCrossFade(200)) // Transition handled by alpha animation now
                     .fitCenter()
                     .diskCacheStrategy(DiskCacheStrategy.AUTOMATIC)
                     .listener(glideListener)
-                    .into(imageView);
+                    .into(targetImageView); // Load into the specified target
         }
     }
 
@@ -701,14 +773,10 @@ public class HomeFragment extends Fragment {
             if (autoPlayImageRunnable != null) {
                 if (mainThreadHandler != null) {
                     mainThreadHandler.removeCallbacks(autoPlayImageRunnable);
-                } else if (imageView != null) {
-                    imageView.removeCallbacks(autoPlayImageRunnable);
                 }
-                // autoPlayImageRunnable = null; // Nullify in stopAutoPlay or here
+                autoPlayImageRunnable = null;
             }
         }
-        // Ensure autoPlayImageRunnable is nulled if not handled by stopAutoPlay
-        autoPlayImageRunnable = null;
 
 
         if (exoPlayer != null) {
@@ -724,7 +792,11 @@ public class HomeFragment extends Fragment {
         }
 
         playerView = null;
-        imageView = null;
+        // --- MODIFICATION START: Nullify both ImageViews ---
+        imageView1 = null;
+        imageView2 = null;
+        activeImageView = null;
+        // --- MODIFICATION END ---
         recyclerView = null;
         btnLogin = null;
         btnRoot = null;
