@@ -82,6 +82,8 @@
             android:layout_height="match_parent"
             android:background="#000000"
             android:visibility="gone"
+            app:default_artwork="@drawable/ic_video_placeholder"
+            app:show_buffering="when_playing"
             app:surface_type="texture_view" />
     </FrameLayout>
 
