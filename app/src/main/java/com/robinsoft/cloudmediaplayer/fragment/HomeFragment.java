@@ -8,12 +8,13 @@ import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.Window;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.ProgressBar;
@@ -40,6 +41,7 @@ import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.DataSource;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
 import com.bumptech.glide.load.engine.GlideException;
+import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions;
 import com.bumptech.glide.request.RequestListener;
 import com.bumptech.glide.request.target.Target;
 import com.robinsoft.cloudmediaplayer.R;
@@ -52,6 +54,7 @@ import com.robinsoft.cloudmediaplayer.cloud.OneDriveMediaService;
 import java.io.File;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.Deque;
 import java.util.List;
@@ -60,8 +63,7 @@ import java.util.List;
 public class HomeFragment extends Fragment {
 
     private static final String TAG = "MP_PLAYBACK";
-    // --- 新增：APK 下载和权限相关 ---
-    private static final int REQUEST_STORAGE_PERMISSION_FOR_APK = 123; // 权限请求码
+    private static final int REQUEST_STORAGE_PERMISSION_FOR_APK = 123;
     private final CloudMediaService mediaService = new OneDriveMediaService();
     private DefaultTrackSelector trackSelector;
     private ExoPlayer exoPlayer;
@@ -73,7 +75,6 @@ public class HomeFragment extends Fragment {
     private ConstraintLayout.LayoutParams originalBottomContainerLayoutParams;
     private View topContainer;
     private View bottomContainer;
-    // 自动播放相关
     private String currentDirId;
     private String autoRootId;
     private Deque<String> autoPlayStack = new ArrayDeque<>();
@@ -85,19 +86,23 @@ public class HomeFragment extends Fragment {
     private Runnable currentAutoPlayOnAllDone;
     private CloudMediaAdapter adapter;
     private ApkDownloader apkDownloader;
-    private String pendingApkUrl;      // 用于在请求权限时暂存 URL
-    private String pendingApkFileName; // 用于在请求权限时暂存文件名
-
-    // --- 新增：用于显示下载进度的UI组件 (请确保在 fragment_home.xml 中添加这些视图) ---
+    private String pendingApkUrl;
+    private String pendingApkFileName;
     private ProgressBar downloadProgressBar;
     private TextView downloadProgressText;
-    // --- 结束新增 ---
+
+    // --- MODIFICATION START ---
+    private Handler mainThreadHandler; // To post results back to the main thread
+    // --- MODIFICATION END ---
 
 
     @Override
     public void onAttach(@NonNull Context context) {
         super.onAttach(context);
         apkDownloader = ApkDownloader.getInstance(context.getApplicationContext());
+        // --- MODIFICATION START ---
+        mainThreadHandler = new Handler(Looper.getMainLooper());
+        // --- MODIFICATION END ---
     }
 
     @Nullable
@@ -108,7 +113,6 @@ public class HomeFragment extends Fragment {
         return inflater.inflate(R.layout.fragment_home, container, false);
     }
 
-    // ... (appendLog, refreshDirectory, prepareMediaUrl 方法不变) ...
     private void appendLog(String s) {
         if (!isAdded() || getActivity() == null) return;
         TestFragment logFrag = null;
@@ -135,7 +139,11 @@ public class HomeFragment extends Fragment {
             return;
         }
         mediaService.listMedia(currentDirId)
-                .observe(getViewLifecycleOwner(), items -> adapter.submitList(items));
+                .observe(getViewLifecycleOwner(), items -> {
+                    if (isAdded() && adapter != null) {
+                        adapter.submitList(items);
+                    }
+                });
     }
 
     private String prepareMediaUrl(String originalUrl) {
@@ -160,14 +168,10 @@ public class HomeFragment extends Fragment {
         topContainer = view.findViewById(R.id.top_container);
         bottomContainer = view.findViewById(R.id.bottom_container);
 
-        // --- 新增：初始化下载进度UI (请确保ID与布局文件一致) ---
-        // 示例ID，你需要替换为你的布局文件中的真实ID
         // downloadProgressBar = view.findViewById(R.id.apk_download_progress_bar);
         // downloadProgressText = view.findViewById(R.id.apk_download_progress_text);
-        // 初始时可以隐藏它们
         // if (downloadProgressBar != null) downloadProgressBar.setVisibility(View.GONE);
         // if (downloadProgressText != null) downloadProgressText.setVisibility(View.GONE);
-        // --- 结束新增 ---
 
 
         if (bottomContainer != null) {
@@ -186,7 +190,6 @@ public class HomeFragment extends Fragment {
                 .build();
 
         exoPlayerListener = new Player.Listener() {
-            // ... (ExoPlayer监听器内容不变) ...
             @Override
             public void onPlaybackStateChanged(int playbackState) {
                 if (playbackState == Player.STATE_ENDED && isAutoPlaying) {
@@ -238,22 +241,23 @@ public class HomeFragment extends Fragment {
                 case VIDEO:
                     imageView.setVisibility(View.GONE);
                     playerView.setVisibility(View.VISIBLE);
-                    exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(url)));
-                    exoPlayer.prepare();
-                    exoPlayer.play();
+                    if (exoPlayer != null) {
+                        exoPlayer.stop();
+                        exoPlayer.clearMediaItems();
+                        exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(url)));
+                        exoPlayer.prepare();
+                        exoPlayer.play();
+                    }
                     break;
                 case APK:
                     Toast.makeText(getContext(), "准备下载并安装：" + item.getName(), Toast.LENGTH_SHORT).show();
-                    // --- 修改：调用新的带权限检查的方法 ---
                     checkStoragePermissionAndDownloadApk(url, item.getName());
-                    // --- 结束修改 ---
                     break;
                 default:
                     Toast.makeText(getContext(), "无法播放该文件类型", Toast.LENGTH_SHORT).show();
             }
         });
 
-        // ... (btnLogin, btnRoot, btnGo, mediaViewClickListener 的 setOnClickListener 内容不变) ...
         btnLogin.setOnClickListener(v -> mediaService.authenticate(requireActivity(), new CloudMediaService.AuthCallback() {
             @Override
             public void onSuccess() {
@@ -308,7 +312,6 @@ public class HomeFragment extends Fragment {
         imageView.setOnClickListener(mediaViewClickListener);
     }
 
-    // ... (startAutoPlay, handleAutoPlayNextFile, playFilesSequentially, playFileAtIndex, stopAutoPlay, loadImage, enterFullscreen, exitFullscreen, toggleFullscreen 方法不变) ...
     private void startAutoPlay() {
         if (!isAutoPlaying || !isAdded()) return;
 
@@ -329,22 +332,48 @@ public class HomeFragment extends Fragment {
 
         mediaService.listMedia(dirIdToPlay)
                 .observe(getViewLifecycleOwner(), items -> {
-                    if (!isAutoPlaying || !isAdded()) return;
-
-                    List<String> childDirs = new ArrayList<>();
-                    List<CloudMediaItem> filesToPlay = new ArrayList<>();
-                    for (CloudMediaItem it : items) {
-                        if (it.getType() == CloudMediaItem.MediaType.FOLDER) {
-                            childDirs.add(it.getId());
-                        } else if (it.getType() == CloudMediaItem.MediaType.IMAGE || it.getType() == CloudMediaItem.MediaType.VIDEO) {
-                            filesToPlay.add(it);
+                    // --- MODIFICATION START ---
+                    if (!isAutoPlaying || !isAdded()) { // Check before starting background work
+                        return;
+                    }
+                    if (items == null) {
+                        Log.d(TAG, "AutoPlay: listMedia returned null items for dirId: " + dirIdToPlay + ". Proceeding to next in stack.");
+                        if (mainThreadHandler != null) { // Ensure handler is available
+                            mainThreadHandler.post(this::startAutoPlay); // Try next directory on main thread
                         }
+                        return;
                     }
-                    filesToPlay.sort(Comparator.comparing(CloudMediaItem::getLastModifiedDateTime));
-                    for (int i = childDirs.size() - 1; i >= 0; i--) {
-                        autoPlayStack.push(childDirs.get(i));
-                    }
-                    playFilesSequentially(filesToPlay, this::startAutoPlay);
+
+                    // Offload list processing to a background thread
+                    new Thread(() -> {
+                        final List<String> localChildDirs = new ArrayList<>();
+                        final List<CloudMediaItem> localFilesToPlay = new ArrayList<>();
+
+                        for (CloudMediaItem it : items) { // Iterate over the 'items' copy
+                            if (it.getType() == CloudMediaItem.MediaType.FOLDER) {
+                                localChildDirs.add(it.getId());
+                            } else if (it.getType() == CloudMediaItem.MediaType.IMAGE || it.getType() == CloudMediaItem.MediaType.VIDEO) {
+                                localFilesToPlay.add(it);
+                            }
+                        }
+                        // Use Collections.sort for compatibility with various List implementations
+                        Collections.sort(localFilesToPlay, Comparator.comparing(CloudMediaItem::getLastModifiedDateTime));
+
+                        // Post back to main thread to update UI and continue logic
+                        if (mainThreadHandler != null) {
+                            mainThreadHandler.post(() -> {
+                                if (!isAutoPlaying || !isAdded()) { // Double check state on main thread
+                                    return;
+                                }
+                                // Update autoPlayStack (from back to front for correct pop order)
+                                for (int i = localChildDirs.size() - 1; i >= 0; i--) {
+                                    autoPlayStack.push(localChildDirs.get(i));
+                                }
+                                playFilesSequentially(localFilesToPlay, this::startAutoPlay);
+                            });
+                        }
+                    }).start();
+                    // --- MODIFICATION END ---
                 });
     }
 
@@ -352,7 +381,7 @@ public class HomeFragment extends Fragment {
         if (!isAutoPlaying || !isAdded()) return;
 
         if (currentAutoPlayFiles == null || currentAutoPlayOnAllDone == null) {
-            Log.d(TAG, "AutoPlay: handleAutoPlayNextFile called but no current auto-play sequence info.");
+            Log.d(TAG, "AutoPlay: handleAutoPlayNextFile called but no current auto-play sequence info. Attempting to process next directory.");
             startAutoPlay();
             return;
         }
@@ -369,6 +398,8 @@ public class HomeFragment extends Fragment {
             currentAutoPlayOnAllDone = null;
             if (tempOnAllDone != null) {
                 tempOnAllDone.run();
+            } else {
+                startAutoPlay(); // Fallback if onAllDone was null
             }
         }
     }
@@ -378,22 +409,24 @@ public class HomeFragment extends Fragment {
             Log.d(TAG, "AutoPlay: playFilesSequentially called but auto-play is off or fragment not added.");
             return;
         }
-        this.currentAutoPlayFiles = new ArrayList<>(files);
-        this.currentAutoPlayIndex = -1;
+        this.currentAutoPlayFiles = new ArrayList<>(files); // Create a copy
+        this.currentAutoPlayIndex = -1; // Will be incremented to 0 by handleAutoPlayNextFile
         this.currentAutoPlayOnAllDone = onAllDone;
 
         Log.d(TAG, "AutoPlay: Starting sequential play for " + files.size() + " files.");
         if (files.isEmpty()) {
-            Log.d(TAG, "AutoPlay: No files to play in this directory.");
+            Log.d(TAG, "AutoPlay: No files to play in this directory. Proceeding to next task.");
             Runnable tempOnAllDone = this.currentAutoPlayOnAllDone;
             this.currentAutoPlayFiles = null;
             this.currentAutoPlayIndex = -1;
             this.currentAutoPlayOnAllDone = null;
             if (tempOnAllDone != null) {
                 tempOnAllDone.run();
+            } else {
+                startAutoPlay(); // Fallback
             }
         } else {
-            handleAutoPlayNextFile();
+            handleAutoPlayNextFile(); // Start playing the first file
         }
     }
 
@@ -402,10 +435,12 @@ public class HomeFragment extends Fragment {
             Log.d(TAG, "AutoPlay: playFileAtIndex called but auto-play is off or fragment not added.");
             return;
         }
-        if (idx >= files.size()) {
-            Log.d(TAG, "AutoPlay: Index out of bounds in playFileAtIndex, calling onAllDone.");
+        if (files == null || idx >= files.size() || idx < 0) { // Robust check
+            Log.w(TAG, "AutoPlay: Invalid files list or index in playFileAtIndex. Index: " + idx + ", Files size: " + (files == null ? "null" : files.size()));
             if (onAllDone != null) {
                 onAllDone.run();
+            } else {
+                startAutoPlay(); // Fallback
             }
             return;
         }
@@ -419,26 +454,42 @@ public class HomeFragment extends Fragment {
 
         Log.d(TAG, "AutoPlay: Playing file " + item.getName() + " at index " + idx);
 
+        preloadNextAutoPlayImageIfApplicable();
+
         if (item.getType() == CloudMediaItem.MediaType.IMAGE) {
             if (playerView != null) playerView.setVisibility(View.GONE);
             if (imageView != null) imageView.setVisibility(View.VISIBLE);
             loadImage(url, false);
 
             if (imageView != null && autoPlayImageRunnable != null) {
-                imageView.removeCallbacks(autoPlayImageRunnable);
+                // --- MODIFICATION START ---
+                // Ensure runnable is removed from the correct handler
+                if (mainThreadHandler != null) {
+                    mainThreadHandler.removeCallbacks(autoPlayImageRunnable);
+                } else if (imageView != null) { // Fallback for older logic, though mainThreadHandler is preferred
+                    imageView.removeCallbacks(autoPlayImageRunnable);
+                }
+                // --- MODIFICATION END ---
             }
             autoPlayImageRunnable = () -> {
                 if (isAutoPlaying && isAdded()) {
                     handleAutoPlayNextFile();
                 }
             };
-            if (imageView != null) {
+            // --- MODIFICATION START ---
+            // Use mainThreadHandler for posting delayed tasks
+            if (mainThreadHandler != null) {
+                mainThreadHandler.postDelayed(autoPlayImageRunnable, 3_000);
+            } else if (imageView != null) { // Fallback
                 imageView.postDelayed(autoPlayImageRunnable, 3_000);
             }
+            // --- MODIFICATION END ---
         } else if (item.getType() == CloudMediaItem.MediaType.VIDEO) {
             if (imageView != null) imageView.setVisibility(View.GONE);
             if (playerView != null) playerView.setVisibility(View.VISIBLE);
             if (exoPlayer != null) {
+                exoPlayer.stop();
+                exoPlayer.clearMediaItems();
                 exoPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(url)));
                 exoPlayer.prepare();
                 exoPlayer.play();
@@ -449,16 +500,44 @@ public class HomeFragment extends Fragment {
         }
     }
 
+    private void preloadNextAutoPlayImageIfApplicable() {
+        if (!isAutoPlaying || !isAdded() || currentAutoPlayFiles == null || currentAutoPlayFiles.isEmpty()) {
+            return;
+        }
+
+        int preloadNextIndex = currentAutoPlayIndex + 1;
+        if (preloadNextIndex < currentAutoPlayFiles.size()) {
+            CloudMediaItem nextItem = currentAutoPlayFiles.get(preloadNextIndex);
+            if (nextItem.getType() == CloudMediaItem.MediaType.IMAGE) {
+                Context safeContext = getContext();
+                if (safeContext == null) return;
+                Log.d(TAG, "AutoPlay: Preloading next image: " + nextItem.getName());
+                Glide.with(safeContext)
+                        .load(prepareMediaUrl(nextItem.getUrl()))
+                        .diskCacheStrategy(DiskCacheStrategy.AUTOMATIC)
+                        .preload();
+            }
+        }
+    }
+
+
     private void stopAutoPlay() {
-        Log.d(TAG, "AutoPlay: Stopping auto-play.");
+        Log.i(TAG, "AutoPlay: Stopping auto-play sequence.");
         isAutoPlaying = false;
         autoPlayStack.clear();
         if (exoPlayer != null && exoPlayer.isPlaying()) {
-            exoPlayer.pause();
+            exoPlayer.stop();
+            exoPlayer.clearMediaItems();
         }
-        if (imageView != null && autoPlayImageRunnable != null) {
-            imageView.removeCallbacks(autoPlayImageRunnable);
+        if (autoPlayImageRunnable != null) {
+            // --- MODIFICATION START ---
+            if (mainThreadHandler != null) {
+                mainThreadHandler.removeCallbacks(autoPlayImageRunnable);
+            } else if (imageView != null) { // Fallback
+                imageView.removeCallbacks(autoPlayImageRunnable);
+            }
             autoPlayImageRunnable = null;
+            // --- MODIFICATION END ---
         }
         currentAutoPlayFiles = null;
         currentAutoPlayIndex = -1;
@@ -471,27 +550,25 @@ public class HomeFragment extends Fragment {
             return;
         }
         final String finalUrl = prepareMediaUrl(url);
+        // final Context safeContext = getContext(); // Using 'this' for Glide in Fragment is fine
 
         RequestListener<Drawable> glideListener = new RequestListener<Drawable>() {
             @Override
             public boolean onLoadFailed(@Nullable GlideException e, Object model, Target<Drawable> target, boolean isFirstResource) {
                 Log.e(TAG, "Glide: Failed to load image: " + finalUrl, e);
-                if (isAdded() && getContext() != null) {
-                    Toast.makeText(getContext(), "加载图片失败", Toast.LENGTH_SHORT).show();
+                if (isAdded() && getContext() != null && imageView != null) { // getContext() for Toast
+                    // Toast.makeText(getContext(), "加载图片失败", Toast.LENGTH_SHORT).show(); // Already handled by Glide's error drawable
+                    if (playerView != null) playerView.setVisibility(View.GONE);
+                    imageView.setVisibility(View.VISIBLE);
                 }
-                if (playerView != null) playerView.setVisibility(View.GONE);
-                if (imageView != null)
-                    imageView.setVisibility(View.VISIBLE); // Keep imageView visible to show placeholder or error
                 return false;
             }
 
             @Override
             public boolean onResourceReady(Drawable resource, Object model, Target<Drawable> target, DataSource dataSource, boolean isFirstResource) {
                 if (imageView != null && isAdded()) {
-                    if (imageView.getVisibility() != View.VISIBLE) {
-                        imageView.setVisibility(View.VISIBLE);
-                    }
-                    if (playerView != null && playerView.getVisibility() == View.VISIBLE) {
+                    imageView.setVisibility(View.VISIBLE);
+                    if (playerView != null) {
                         playerView.setVisibility(View.GONE);
                     }
                 }
@@ -501,13 +578,17 @@ public class HomeFragment extends Fragment {
 
         if (loadForPotentialFullscreen && !isAutoPlaying) {
             DisplayMetrics displayMetrics = new DisplayMetrics();
-            if (getActivity() != null) {
-                getActivity().getWindowManager().getDefaultDisplay().getMetrics(displayMetrics);
+            Activity activity = getActivity();
+            if (activity != null) {
+                activity.getWindowManager().getDefaultDisplay().getMetrics(displayMetrics);
                 int screenWidth = displayMetrics.widthPixels;
                 int screenHeight = displayMetrics.heightPixels;
                 Log.d(TAG, "Glide: Loading image for potential fullscreen: " + finalUrl + " with override " + screenWidth + "x" + screenHeight);
                 Glide.with(this)
                         .load(finalUrl)
+                        .placeholder(R.drawable.ic_image_placeholder)
+                        .error(R.drawable.ic_image_error)
+                        .transition(DrawableTransitionOptions.withCrossFade(200))
                         .override(screenWidth, screenHeight)
                         .fitCenter()
                         .diskCacheStrategy(DiskCacheStrategy.RESOURCE)
@@ -515,14 +596,21 @@ public class HomeFragment extends Fragment {
                         .into(imageView);
             } else {
                 Log.w(TAG, "Activity not available for getting screen dimensions. Loading with default Glide sizing.");
-                Glide.with(this).load(finalUrl).fitCenter().diskCacheStrategy(DiskCacheStrategy.AUTOMATIC).listener(glideListener).into(imageView);
+                Glide.with(this).load(finalUrl)
+                        .placeholder(R.drawable.ic_image_placeholder)
+                        .error(R.drawable.ic_image_error)
+                        .transition(DrawableTransitionOptions.withCrossFade(200))
+                        .fitCenter().diskCacheStrategy(DiskCacheStrategy.AUTOMATIC).listener(glideListener).into(imageView);
             }
-        } else {
-            Log.d(TAG, "Glide: Loading image with automatic sizing based on ImageView: " + finalUrl);
+        } else { // Auto-play or non-fullscreen initial load
+            Log.d(TAG, "Glide: Loading image with automatic sizing (auto-play or non-fullscreen initial): " + finalUrl);
             Glide.with(this)
                     .load(finalUrl)
+                    .placeholder(R.drawable.ic_image_placeholder)
+                    .error(R.drawable.ic_image_error)
+                    .transition(DrawableTransitionOptions.withCrossFade(200))
                     .fitCenter()
-                    .diskCacheStrategy(DiskCacheStrategy.AUTOMATIC) // Use AUTOMATIC for non-fullscreen or auto-play
+                    .diskCacheStrategy(DiskCacheStrategy.AUTOMATIC)
                     .listener(glideListener)
                     .into(imageView);
         }
@@ -534,17 +622,17 @@ public class HomeFragment extends Fragment {
         if (activity == null || !isAdded()) return;
         isFullscreen = true;
 
-        Window window = activity.getWindow();
-
         View activityBottomNav = activity.findViewById(R.id.bottom_nav);
         if (activityBottomNav != null) activityBottomNav.setVisibility(View.GONE);
 
         if (topContainer != null) topContainer.setVisibility(View.GONE);
         if (bottomContainer != null) {
-            // originalBottomContainerLayoutParams = (ConstraintLayout.LayoutParams) bottomContainer.getLayoutParams(); // Already stored
             ConstraintLayout.LayoutParams lp = (ConstraintLayout.LayoutParams) bottomContainer.getLayoutParams();
             lp.topToTop = ConstraintLayout.LayoutParams.PARENT_ID;
             lp.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID;
+            // Ensure width and height are match_parent for fullscreen
+            lp.width = ConstraintLayout.LayoutParams.MATCH_PARENT;
+            lp.height = ConstraintLayout.LayoutParams.MATCH_PARENT;
             bottomContainer.setLayoutParams(lp);
         }
     }
@@ -555,30 +643,33 @@ public class HomeFragment extends Fragment {
         if (activity == null || !isAdded()) return;
         isFullscreen = false;
 
-        Window window = activity.getWindow();
-
-        if (topContainer != null) topContainer.setVisibility(View.VISIBLE);
-
-        if (bottomContainer != null && originalBottomContainerLayoutParams != null) { // Check if original params are stored
-            // Restore original constraints or specific non-fullscreen constraints
-            // This simplified version might need adjustment based on your exact original layout.
-            ConstraintLayout.LayoutParams lp = (ConstraintLayout.LayoutParams) bottomContainer.getLayoutParams();
-            lp.topToTop = R.id.guideline_half; // Assuming guideline_half is the intended top constraint out of fullscreen
-            lp.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID;
-            bottomContainer.setLayoutParams(originalBottomContainerLayoutParams); // Prefer restoring original
-            // bottomContainer.requestLayout(); // Usually not needed if restoring original LayoutParams object
-            // bottomContainer.invalidate(); // Usually not needed
-        } else if (bottomContainer != null) {
-            // Fallback if originalBottomContainerLayoutParams wasn't properly captured or is null
-            ConstraintLayout.LayoutParams lp = (ConstraintLayout.LayoutParams) bottomContainer.getLayoutParams();
-            lp.topToTop = R.id.guideline_half;
-            lp.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID;
-            bottomContainer.setLayoutParams(lp);
+        if (topContainer != null) {
+            topContainer.setVisibility(View.VISIBLE);
         }
 
+        // --- MODIFICATION START: Revert exitFullscreen to a simpler, direct constraint setting ---
+        if (bottomContainer != null) {
+            Log.d(TAG, "exitFullscreen: Reverting to direct constraint setting for non-fullscreen.");
+            ConstraintLayout.LayoutParams lp = (ConstraintLayout.LayoutParams) bottomContainer.getLayoutParams();
+
+
+            lp.topToTop = R.id.guideline_half; // Assuming this is your non-fullscreen top constraint
+            lp.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID; // Assuming it's constrained to parent bottom
+
+
+            lp.width = ConstraintLayout.LayoutParams.MATCH_CONSTRAINT; // 0dp
+            lp.height = ConstraintLayout.LayoutParams.MATCH_CONSTRAINT; // 0dp, or a specific aspect ratio height
+
+
+            bottomContainer.setLayoutParams(lp);
+            bottomContainer.requestLayout(); // Crucial to apply new layout parameters
+        }
+        // --- MODIFICATION END ---
 
         View activityBottomNav = activity.findViewById(R.id.bottom_nav);
-        if (activityBottomNav != null) activityBottomNav.setVisibility(View.VISIBLE);
+        if (activityBottomNav != null) {
+            activityBottomNav.setVisibility(View.VISIBLE);
+        }
     }
 
     private void toggleFullscreen() {
@@ -592,11 +683,15 @@ public class HomeFragment extends Fragment {
         super.onDestroyView();
         Log.d(TAG, "onDestroyView called");
 
-        if (isAutoPlaying) {
+        if (isAutoPlaying) { // Ensure autoPlay is stopped
             stopAutoPlay();
-        } else {
-            if (imageView != null && autoPlayImageRunnable != null) {
-                imageView.removeCallbacks(autoPlayImageRunnable);
+        } else { // If not auto-playing, still ensure any pending image runnable is cleared
+            if (autoPlayImageRunnable != null) {
+                if (mainThreadHandler != null) {
+                    mainThreadHandler.removeCallbacks(autoPlayImageRunnable);
+                } else if (imageView != null) { // Fallback
+                    imageView.removeCallbacks(autoPlayImageRunnable);
+                }
                 autoPlayImageRunnable = null;
             }
         }
@@ -608,10 +703,20 @@ public class HomeFragment extends Fragment {
             exoPlayer.release();
             exoPlayer = null;
         }
-        if (apkDownloader != null) {
-            Log.d(TAG, "Calling apkDownloader.cleanup()");
-            apkDownloader.cleanup(); // cleanup is a no-op in current ApkDownloader, but good to have
+        // apkDownloader cleanup is a no-op, so can be omitted if desired
+        // if (apkDownloader != null) {
+        //     apkDownloader.cleanup();
+        // }
+
+        // --- MODIFICATION START ---
+        // Clear handler callbacks in onDestroyView to prevent leaks if fragment is destroyed but handler still has messages
+        if (mainThreadHandler != null) {
+            mainThreadHandler.removeCallbacksAndMessages(null);
+            // Don't null out mainThreadHandler here if it's re-created in onAttach.
+            // If it's tied to fragment lifecycle, it will be GC'd with fragment.
+            // Or, null it out in onDetach.
         }
+        // --- MODIFICATION END ---
 
         playerView = null;
         imageView = null;
@@ -627,161 +732,140 @@ public class HomeFragment extends Fragment {
         currentAutoPlayOnAllDone = null;
         topContainer = null;
         bottomContainer = null;
-        // --- 新增：清空下载进度UI引用 ---
         downloadProgressBar = null;
         downloadProgressText = null;
-        // --- 结束新增 ---
     }
 
-    // --- 新增：检查权限并开始下载的方法 ---
+    // --- MODIFICATION START ---
+    @Override
+    public void onDetach() {
+        super.onDetach();
+        // Clean up handler here as well, as Fragment is detaching from Activity
+        if (mainThreadHandler != null) {
+            mainThreadHandler.removeCallbacksAndMessages(null);
+            mainThreadHandler = null; // Good practice to nullify here
+        }
+    }
+    // --- MODIFICATION END ---
+
     private void checkStoragePermissionAndDownloadApk(String url, String fileName) {
         this.pendingApkUrl = url;
         this.pendingApkFileName = fileName;
 
-        // WRITE_EXTERNAL_STORAGE 权限仅在 Android 9 (API 28) 及以下版本需要
-        // (基于 Manifest 中 android:maxSdkVersion="28" 的设置)
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
             if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.WRITE_EXTERNAL_STORAGE)
                     != PackageManager.PERMISSION_GRANTED) {
-                // 权限尚未授予，请求权限
-                // Fragment可以直接调用requestPermissions
                 requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},
                         REQUEST_STORAGE_PERMISSION_FOR_APK);
             } else {
-                // 权限已授予 (或不需要请求，因为是 Android 10+)
                 proceedWithApkDownload(pendingApkUrl, pendingApkFileName);
             }
         } else {
-            // Android 10 (API 29) 及以上版本，应用可以直接写入自己的文件到公共 Downloads 目录
-            // (基于 Manifest 中对 WRITE_EXTERNAL_STORAGE 使用 maxSdkVersion="28")
             proceedWithApkDownload(pendingApkUrl, pendingApkFileName);
         }
     }
-    // --- 结束新增 ---
 
-    // --- 新增：实际执行下载的方法 ---
     private void proceedWithApkDownload(String url, String fileName) {
-        if (!isAdded()) {
-            Log.w(TAG, "proceedWithApkDownload: Fragment not added.");
+        if (!isAdded() || getActivity() == null) {
+            Log.w(TAG, "proceedWithApkDownload: Fragment not added or activity is null.");
+            if (downloadProgressBar != null)
+                downloadProgressBar.setVisibility(View.GONE); // Reset UI
+            if (downloadProgressText != null) downloadProgressText.setVisibility(View.GONE);
             return;
         }
+        // Activity activity = getActivity(); // Already checked getActivity() != null
+
         if (apkDownloader != null) {
-            Activity activity = getActivity();
-            if (activity != null) { // isAdded() 已经保证了 getContext() != null，activity 也可以检查
-
-                // --- 新增：显示下载进度UI ---
-                if (downloadProgressBar != null) downloadProgressBar.setVisibility(View.VISIBLE);
-                if (downloadProgressText != null) {
-                    downloadProgressText.setText("准备下载...");
-                    downloadProgressText.setVisibility(View.VISIBLE);
-                }
-                // --- 结束新增 ---
-
-                apkDownloader.downloadAndInstallApk(url, fileName, activity, new ApkDownloader.Callback() {
-                    @Override
-                    public void onSuccess(File apkFile) {
-                        Log.d(TAG, "APK Downloaded Successfully. File: " + apkFile.getAbsolutePath());
-                        if (isAdded()) { // 再次检查 Fragment 是否仍然附加
-                            Toast.makeText(requireContext(), "APK 下载成功，准备安装", Toast.LENGTH_SHORT).show();
-                            // --- 新增：隐藏下载进度UI ---
-                            if (downloadProgressBar != null)
-                                downloadProgressBar.setVisibility(View.GONE);
-                            if (downloadProgressText != null) {
-                                // downloadProgressText.setText("下载完成"); // 可以选择显示完成状态
-                                downloadProgressText.setVisibility(View.GONE); // 或者直接隐藏
-                            }
-                            // --- 结束新增 ---
-                        }
-                    }
-
-                    @Override
-                    public void onFailure(String errorMessage) {
-                        Log.e(TAG, "APK Download Failed: " + errorMessage);
-                        if (isAdded()) {
-                            Toast.makeText(requireContext(), "下载失败: " + errorMessage, Toast.LENGTH_LONG).show();
-                            // --- 新增：处理下载失败时的UI ---
-                            if (downloadProgressBar != null)
-                                downloadProgressBar.setVisibility(View.GONE);
-                            if (downloadProgressText != null) {
-                                downloadProgressText.setText("下载失败");
-                                // downloadProgressText.setVisibility(View.GONE); // 或者一段时间后隐藏
-                            }
-                            // --- 结束新增 ---
-                        }
-                    }
-
-                    @Override
-                    public void onProgress(int progressPercentage) {
-                        Log.d(TAG, "APK Download Progress: " + progressPercentage + "%");
-                        if (isAdded()) {
-                            // --- 新增：更新下载进度UI ---
-                            if (downloadProgressBar != null) {
-                                if (downloadProgressBar.getVisibility() != View.VISIBLE)
-                                    downloadProgressBar.setVisibility(View.VISIBLE);
-                                downloadProgressBar.setProgress(progressPercentage);
-                            }
-                            if (downloadProgressText != null) {
-                                if (downloadProgressText.getVisibility() != View.VISIBLE)
-                                    downloadProgressText.setVisibility(View.VISIBLE);
-                                downloadProgressText.setText("下载中... " + progressPercentage + "%");
-                            }
-                            // --- 结束新增 ---
-                        }
-                    }
-                });
-            } else {
-                Log.e(TAG, "Fragment not attached to an activity, or activity is null. Cannot start APK download.");
-                if (isAdded() && getContext() != null) { // 理论上 isAdded() 包含 getContext() != null
-                    Toast.makeText(getContext(), "无法启动下载，活动不存在", Toast.LENGTH_SHORT).show();
-                }
-                // --- 新增：确保UI在无法启动时被重置 ---
-                if (downloadProgressBar != null) downloadProgressBar.setVisibility(View.GONE);
-                if (downloadProgressText != null) downloadProgressText.setVisibility(View.GONE);
-                // --- 结束新增 ---
+            if (downloadProgressBar != null) downloadProgressBar.setVisibility(View.VISIBLE);
+            if (downloadProgressText != null) {
+                downloadProgressText.setText("准备下载...");
+                downloadProgressText.setVisibility(View.VISIBLE);
             }
+
+            apkDownloader.downloadAndInstallApk(url, fileName, getActivity(), new ApkDownloader.Callback() {
+                @Override
+                public void onSuccess(File apkFile) {
+                    Log.d(TAG, "APK Downloaded Successfully. File: " + apkFile.getAbsolutePath());
+                    if (isAdded()) {
+                        Toast.makeText(requireContext(), "APK 下载成功，准备安装", Toast.LENGTH_SHORT).show();
+                        if (downloadProgressBar != null)
+                            downloadProgressBar.setVisibility(View.GONE);
+                        if (downloadProgressText != null) {
+                            downloadProgressText.setVisibility(View.GONE);
+                        }
+                    }
+                }
+
+                @Override
+                public void onFailure(String errorMessage) {
+                    Log.e(TAG, "APK Download Failed: " + errorMessage);
+                    if (isAdded()) {
+                        Toast.makeText(requireContext(), "下载失败: " + errorMessage, Toast.LENGTH_LONG).show();
+                        if (downloadProgressBar != null)
+                            downloadProgressBar.setVisibility(View.GONE);
+                        if (downloadProgressText != null) {
+                            downloadProgressText.setText("下载失败");
+                            // Consider hiding after a delay or on next action
+                        }
+                    }
+                }
+
+                @Override
+                public void onProgress(int progressPercentage) {
+                    Log.d(TAG, "APK Download Progress: " + progressPercentage + "%");
+                    if (isAdded()) {
+                        if (downloadProgressBar != null) {
+                            if (downloadProgressBar.getVisibility() != View.VISIBLE)
+                                downloadProgressBar.setVisibility(View.VISIBLE);
+                            downloadProgressBar.setProgress(progressPercentage);
+                        }
+                        if (downloadProgressText != null) {
+                            if (downloadProgressText.getVisibility() != View.VISIBLE)
+                                downloadProgressText.setVisibility(View.VISIBLE);
+                            downloadProgressText.setText("下载中... " + progressPercentage + "%");
+                        }
+                    }
+                }
+            });
         } else {
             Log.e(TAG, "ApkDownloader not initialized!");
             if (isAdded() && getContext() != null) {
                 Toast.makeText(getContext(), "下载器服务未准备好", Toast.LENGTH_SHORT).show();
             }
-            // --- 新增：确保UI在下载器未初始化时被重置 ---
             if (downloadProgressBar != null) downloadProgressBar.setVisibility(View.GONE);
             if (downloadProgressText != null) downloadProgressText.setVisibility(View.GONE);
-            // --- 结束新增 ---
         }
     }
-    // --- 结束新增 ---
 
 
-    // --- 新增：处理权限请求结果 ---
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQUEST_STORAGE_PERMISSION_FOR_APK) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                // 权限被授予
-                Toast.makeText(getContext(), "存储权限已授予，开始下载...", Toast.LENGTH_SHORT).show();
+                if (isAdded() && getContext() != null) {
+                    Toast.makeText(getContext(), "存储权限已授予，开始下载...", Toast.LENGTH_SHORT).show();
+                }
                 if (pendingApkUrl != null && pendingApkFileName != null) {
                     proceedWithApkDownload(pendingApkUrl, pendingApkFileName);
                 } else {
                     Log.w(TAG, "权限授予后，待下载的APK信息丢失");
-                    Toast.makeText(getContext(), "无法继续下载，信息丢失", Toast.LENGTH_SHORT).show();
+                    if (isAdded() && getContext() != null) {
+                        Toast.makeText(getContext(), "无法继续下载，信息丢失", Toast.LENGTH_SHORT).show();
+                    }
                 }
             } else {
-                // 权限被拒绝
-                Toast.makeText(getContext(), "存储权限被拒绝，无法下载APK", Toast.LENGTH_LONG).show();
-                // --- 新增：UI重置 ---
+                if (isAdded() && getContext() != null) {
+                    Toast.makeText(getContext(), "存储权限被拒绝，无法下载APK", Toast.LENGTH_LONG).show();
+                }
                 if (downloadProgressBar != null) downloadProgressBar.setVisibility(View.GONE);
                 if (downloadProgressText != null) {
                     downloadProgressText.setText("权限被拒绝");
-                    // downloadProgressText.setVisibility(View.GONE); // 或者保持显示然后隐藏
+                    // downloadProgressText.setVisibility(View.GONE); // Optionally hide after a delay
                 }
-                // --- 结束新增 ---
             }
-            // 清除暂存的参数
             pendingApkUrl = null;
             pendingApkFileName = null;
         }
     }
-    // --- 结束新增 ---
 }
