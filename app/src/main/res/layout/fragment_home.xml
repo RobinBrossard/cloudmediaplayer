@@ -74,6 +74,7 @@
             android:background="#000000"
             android:contentDescription="@string/image_description"
             android:scaleType="fitCenter"
+            android:src="@drawable/ic_image_placeholder"
             android:visibility="visible" />
 
         <ImageView
@@ -83,6 +84,7 @@
             android:background="#000000"
             android:contentDescription="@string/image_description"
             android:scaleType="fitCenter"
+            android:src="@drawable/ic_image_placeholder"
             android:visibility="gone" />
 
         <androidx.media3.ui.PlayerView
