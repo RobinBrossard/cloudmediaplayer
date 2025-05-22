@@ -19,6 +19,8 @@ import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.constraintlayout.widget.ConstraintLayout;
@@ -58,7 +60,8 @@ import java.util.List;
 public class HomeFragment extends Fragment {
 
     private static final String TAG = "MP_PLAYBACK";
-    private static final int REQUEST_STORAGE_PERMISSION_FOR_APK = 123;
+    // 2. REQUEST_STORAGE_PERMISSION_FOR_APK 常量不再需要，可以注释或删除
+    // private static final int REQUEST_STORAGE_PERMISSION_FOR_APK = 123;
     private final CloudMediaService mediaService = new OneDriveMediaService();
     private DefaultTrackSelector trackSelector;
     private ExoPlayer exoPlayer;
@@ -93,6 +96,9 @@ public class HomeFragment extends Fragment {
     private Handler mainThreadHandler;
     private long autoPlayImageDisplayDurationMs = 5000L;
 
+    // 3. 声明 ActivityResultLauncher
+    private ActivityResultLauncher<String> requestPermissionLauncher;
+
 
     @Override
     public void onAttach(@NonNull Context context) {
@@ -100,6 +106,41 @@ public class HomeFragment extends Fragment {
         apkDownloader = ApkDownloader.getInstance(context.getApplicationContext());
         mainThreadHandler = new Handler(Looper.getMainLooper());
     }
+
+    // 4. 在 onCreate 中初始化 requestPermissionLauncher
+    @Override
+    public void onCreate(@Nullable Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+
+        requestPermissionLauncher = registerForActivityResult(
+                new ActivityResultContracts.RequestPermission(),
+                isGranted -> {
+                    // 这里的逻辑完全来自于您原来 onRequestPermissionsResult 中对应的部分
+                    if (isGranted) {
+                        if (isAdded() && getContext() != null) {
+                            Toast.makeText(getContext(), "存储权限已授予，开始下载...", Toast.LENGTH_SHORT).show();
+                        }
+                        // pendingApkUrl 和 pendingApkFileName 是成员变量，可以直接访问
+                        if (pendingApkUrl != null && pendingApkFileName != null) {
+                            proceedWithApkDownload(pendingApkUrl, pendingApkFileName);
+                        } else {
+                            Log.w(TAG, "权限授予后，待下载的APK信息丢失");
+                            if (isAdded() && getContext() != null) {
+                                Toast.makeText(getContext(), "无法继续下载，信息丢失", Toast.LENGTH_SHORT).show();
+                            }
+                        }
+                    } else {
+                        if (isAdded() && getContext() != null) {
+                            Toast.makeText(getContext(), "存储权限被拒绝，无法下载APK", Toast.LENGTH_LONG).show();
+                        }
+                        appendLog("权限被拒绝"); // 保留您原有的 appendLog 调用
+                    }
+                    // 清理临时变量，与您原来 onRequestPermissionsResult 中的逻辑保持一致
+                    pendingApkUrl = null;
+                    pendingApkFileName = null;
+                });
+    }
+
 
     @Nullable
     @Override
@@ -304,16 +345,22 @@ public class HomeFragment extends Fragment {
             currentDirId = null;
             refreshDirectory();
         });
-
+/*
+currentDirId用于记录用户当前所在的网盘目录，其中，如果是根目录，则currentDirId=null。currentDirId在三处会发生变动，
+登录网盘时，currentDirId=null，代表在根目录；点击回到根目录按钮时，currentDirId=null；以及用户点击recyclerView里面的item，
+类型是目录时，将其设置为被点击的目录，且根据该子目录刷新recyclerView的内容。然后，当自动播放时，应该从currentDirId开始播放，
+先播放currentDirId的所有文件，然后将其子目录全部入栈，逐一遍历和播放子目录。当栈为空时，代表完成了所有currentDirId下子目录的播放，
+那么我们应该重新开始播放。
+ */
         btnGo.setOnClickListener(v -> {
 
-            RecyclerView.Adapter<?> adapter = recyclerView.getAdapter();
-            if (adapter != null && adapter.getItemCount() > 0) {
+            RecyclerView.Adapter<?> adapterLocal = recyclerView.getAdapter(); // 使用您原来的变量名 adapter
+            if (adapterLocal != null && adapterLocal.getItemCount() > 0) {
                 // RecyclerView 有内容，正常放行
-                Log.d("RecyclerViewCheck", "RecyclerView has content. Item count: " + adapter.getItemCount());
+                Log.d("RecyclerViewCheck", "RecyclerView has content. Item count: " + adapterLocal.getItemCount());
             } else {
                 // RecyclerView 为空，或者没有设置 Adapter
-                if (adapter == null) {
+                if (adapterLocal == null) {
                     Log.d("RecyclerViewCheck", "RecyclerView has no adapter set.");
                 } else {
                     Log.d("RecyclerViewCheck", "RecyclerView is empty. Item count: 0");
@@ -323,7 +370,7 @@ public class HomeFragment extends Fragment {
             }
 
 //            if (currentDirId == null) return;  //可以是null，null代表是根目录
-            if (!isAutoPlaying) {
+            if (!isAutoPlaying) { //点了按钮，从非自动播放开始自动播放
                 //autoRootId = currentDirId;
                 autoPlayStack.clear();
 //                if (autoRootId != null) {
@@ -331,11 +378,15 @@ public class HomeFragment extends Fragment {
 //                }
                 if (currentDirId != null)
                     autoPlayStack.push(currentDirId);
+                else {
+                    //代表当前在根目录
+                }
                 isAutoPlaying = true;
                 btnGo.setText("停止");
                 enterFullscreen();
                 startAutoPlay();
             } else {
+                //点了按钮，从自动播放关闭
                 //实际上不大可能来这个分支。如果自动播放了，看不到按钮的
                 exitFullscreen();
                 stopAutoPlay();
@@ -345,12 +396,12 @@ public class HomeFragment extends Fragment {
         });
 
         View.OnClickListener mediaViewClickListener = v -> {
-            if (isAutoPlaying && isFullscreen) {
+            if (isAutoPlaying) { //正在自动播放
                 exitFullscreen();
                 stopAutoPlay();
                 btnGo.setText("播放");
                 refreshDirectory();
-            } else {
+            } else {  //非自动播放，手动查看时候，全屏非全屏切换
                 toggleFullscreen();
             }
         };
@@ -362,33 +413,56 @@ public class HomeFragment extends Fragment {
     }
 
     private void startAutoPlay() {
-        if (!isAutoPlaying || !isAdded()) return;
+        if (!isAutoPlaying || !isAdded()) {
+            Log.d(TAG, "startAutoPlay: Bailing out, isAutoPlaying=" + isAutoPlaying + ", isAdded=" + isAdded());
+            return;
+        }
 
         String dirIdToPlay;
         if (autoPlayStack.isEmpty()) {
-            dirIdToPlay = null; //没有就从根目录开始
-            Log.d(TAG, "AutoPlay: Stack empty, playing from autoRootId: " + (dirIdToPlay == null ? "ROOT" : dirIdToPlay));
+            // 栈为空，意味着当前播放范围的遍历已完成一轮，或者首次从根目录启动。
+            // 使用 this.currentDirId (Fragment 成员变量，代表用户启动播放时的目录) 作为播放/重新播放的起点。
+            dirIdToPlay = this.currentDirId;
+            Log.d(TAG, "AutoPlay: Stack empty. Starting/Restarting playback from scope: " + (dirIdToPlay == null ? "ROOT" : dirIdToPlay));
         } else {
             dirIdToPlay = autoPlayStack.pop();
-            Log.d(TAG, "AutoPlay: Popped from stack, playing dirId: " + dirIdToPlay);
+            Log.d(TAG, "AutoPlay: Popped '" + dirIdToPlay + "' from stack. Stack size now: " + autoPlayStack.size());
         }
 
         if (getViewLifecycleOwner() == null) {
             Log.w(TAG, "AutoPlay: View lifecycle owner not available. Stopping auto-play.");
-            stopAutoPlay();
+            stopAutoPlay(); // 确保停止，并可能重置UI
+            if (isAdded() && btnGo != null) btnGo.setText("播放");
+            if (isFullscreen) exitFullscreen();
             return;
         }
 
+        Log.d(TAG, "AutoPlay: Listing media for dirId: " + (dirIdToPlay == null ? "ROOT" : dirIdToPlay));
         mediaService.listMedia(dirIdToPlay)
                 .observe(getViewLifecycleOwner(), items -> {
-                    if (!isAutoPlaying || !isAdded()) {
+                    if (!isAutoPlaying || !isAdded()) { // 再次检查状态，因为这是异步回调
+                        Log.d(TAG, "AutoPlay: listMedia observed, but state changed. isAutoPlaying=" + isAutoPlaying + ", isAdded=" + isAdded());
                         return;
                     }
                     if (items == null) {
-                        Log.d(TAG, "AutoPlay: listMedia returned null items for dirId: " + dirIdToPlay + ". Proceeding to next in stack.");
+                        Log.w(TAG, "AutoPlay: listMedia returned null items for dirId: " + (dirIdToPlay == null ? "ROOT" : dirIdToPlay) + ". Attempting next from stack or restarting scope.");
+                        // 如果获取列表失败，直接尝试处理栈中下一个或重新开始当前范围
                         if (mainThreadHandler != null) {
                             mainThreadHandler.post(this::startAutoPlay);
                         }
+                        return;
+                    }
+
+                    // 当 items 不为 null，但在一个循环的开始，如果 dirIdToPlay (即 this.currentDirId) 本身就是空的，
+                    // 并且 items 也为空（例如整个网盘是空的），我们需要一个终止条件。
+                    if (dirIdToPlay == null && items.isEmpty() && autoPlayStack.isEmpty()) {
+                        Log.i(TAG, "AutoPlay: Root directory is empty and stack is empty. No content to play.");
+                        if (isAdded() && getContext() != null) {
+                            Toast.makeText(getContext(), "自动播放完成：未找到任何可播放内容。", Toast.LENGTH_LONG).show();
+                        }
+                        exitFullscreen();
+                        stopAutoPlay();
+                        btnGo.setText("播放");
                         return;
                     }
 
@@ -403,16 +477,43 @@ public class HomeFragment extends Fragment {
                                 localFilesToPlay.add(it);
                             }
                         }
-                        //排序慢，先用默认不排序了
-                        //  Collections.sort(localFilesToPlay, Comparator.comparing(CloudMediaItem::getLastModifiedDateTime));
 
                         if (mainThreadHandler != null) {
                             mainThreadHandler.post(() -> {
-                                if (!isAutoPlaying || !isAdded()) {
+                                if (!isAutoPlaying || !isAdded()) { // 再次检查
                                     return;
                                 }
+                                // 将子目录反向压入栈，以实现期望的遍历顺序
                                 for (int i = localChildDirs.size() - 1; i >= 0; i--) {
                                     autoPlayStack.push(localChildDirs.get(i));
+                                }
+                                Log.d(TAG, "AutoPlay: Pushed " + localChildDirs.size() + " child dirs. Stack size now: " + autoPlayStack.size());
+
+                                // 检查在处理完当前目录后是否应该结束整个自动播放
+                                // （例如，当前目录没文件，子目录也处理完了，栈也空了）
+                                if (localFilesToPlay.isEmpty() && autoPlayStack.isEmpty()) {
+                                    // 这种情况意味着 dirIdToPlay (可能是 this.currentDirId) 没有可播放文件，
+                                    // 也没有子目录被加入栈（或者子目录处理完了栈又空了）。
+                                    // 这实际上是一个循环点，或者如果 this.currentDirId 本身就没有内容，
+                                    // 那么就是整个范围都没有内容。
+                                    // startAutoPlay 下次被调用时，会因为栈空而重新使用 this.currentDirId。
+                                    // 如果 this.currentDirId 本身就是个空目录且无子目录，会无限循环尝试播放它。
+                                    // 所以，如果 localFilesToPlay 为空，并且处理完子目录后 autoPlayStack 也为空，
+                                    // 并且 dirIdToPlay 就是 this.currentDirId（意味着我们刚开始一个循环或初始扫描根范围）
+                                    // 且这个 this.currentDirId 确实没有内容，那么就应该停止。
+
+                                    // 上面已经有对 items.isEmpty() && autoPlayStack.isEmpty() 的判断，
+                                    // 这里的逻辑是确保 playFilesSequentially 被正确调用或跳过。
+                                    if (this.currentDirId == dirIdToPlay && items.isEmpty() && localChildDirs.isEmpty()) {
+                                        Log.i(TAG, "AutoPlay: Scope root " + (dirIdToPlay == null ? "ROOT" : dirIdToPlay) + " is empty (no files, no subdirs). Stopping.");
+                                        if (isAdded() && getContext() != null) {
+                                            Toast.makeText(getContext(), "自动播放范围为空，已停止。", Toast.LENGTH_LONG).show();
+                                        }
+                                        exitFullscreen();
+                                        stopAutoPlay();
+                                        btnGo.setText("播放");
+                                        return;
+                                    }
                                 }
                                 playFilesSequentially(localFilesToPlay, this::startAutoPlay);
                             });
@@ -585,12 +686,10 @@ public class HomeFragment extends Fragment {
         currentAutoPlayOnAllDone = null;
     }
 
-    // --- MODIFICATION START: Modify loadImage signature and logic for double buffering ---
+    // loadImage 方法保持您提供的版本，不进行任何改动
     private void loadImage(String url, boolean loadForPotentialFullscreen, final boolean isForAutoPlayTimer, final ImageView targetImageView) {
-        // --- MODIFICATION END ---
-        if (!isAdded() || getContext() == null || targetImageView == null) { // Check targetImageView
+        if (!isAdded() || getContext() == null || targetImageView == null) {
             Log.w(TAG, "loadImage: Fragment not ready, ImageView is null, or targetImageView is null.");
-            // If it's an auto-play scenario and loading fails here, try to advance
             if (isForAutoPlayTimer && isAutoPlaying && isAdded() && mainThreadHandler != null) {
                 Log.w(TAG, "loadImage: Pre-condition failed for auto-play image, trying next.");
                 mainThreadHandler.post(this::handleAutoPlayNextFile);
@@ -599,21 +698,16 @@ public class HomeFragment extends Fragment {
         }
         final String finalUrl = prepareMediaUrl(url);
 
-        // If this load is for an auto-play timer, ensure any *globally* pending timer is cleared.
-        // The more specific cancellation (for the *active* view's timer) happens in playFileAtIndex.
         if (isForAutoPlayTimer && autoPlayImageRunnable != null && mainThreadHandler != null) {
             // This might be redundant if playFileAtIndex always cancels, but good as a safeguard.
-            // mainThreadHandler.removeCallbacks(autoPlayImageRunnable);
+            // mainThreadHandler.removeCallbacks(autoPlayImageRunnable); // 保持您原有代码的注释状态
         }
-
 
         RequestListener<Drawable> glideListener = new RequestListener<Drawable>() {
             @Override
             public boolean onLoadFailed(@Nullable GlideException e, Object model, Target<Drawable> target, boolean isFirstResource) {
                 Log.e(TAG, "Glide: Failed to load image into " + (targetImageView == imageView1 ? "imageView1" : "imageView2") + " URL: " + finalUrl, e);
                 if (isAdded() && getContext() != null) {
-                    // Don't hide the activeImageView if the background load fails
-                    // Toast.makeText(getContext(), "图片加载失败: " + finalUrl, Toast.LENGTH_SHORT).show();
                     if (isForAutoPlayTimer && isAutoPlaying && isAdded()) {
                         Log.w(TAG, "AutoPlay: Image load failed for " + finalUrl + ", attempting to play next file.");
                         if (mainThreadHandler != null) {
@@ -633,32 +727,27 @@ public class HomeFragment extends Fragment {
                 Log.d(TAG, "Glide: Image resource ready for " + (targetImageView == imageView1 ? "imageView1" : "imageView2") + " URL: " + finalUrl);
                 if (targetImageView != null && isAdded()) {
 
-                    // --- MODIFICATION START: Swap ImageViews and start timer ---
                     if (playerView != null)
-                        playerView.setVisibility(View.GONE); // Ensure player is hidden
+                        playerView.setVisibility(View.GONE);
 
                     ImageView previouslyActiveImageView = activeImageView;
-                    activeImageView = targetImageView; // The target view with the new image is now active
+                    activeImageView = targetImageView;
 
                     activeImageView.setVisibility(View.VISIBLE);
-                    activeImageView.setAlpha(0f); // Prepare for fade-in
-                    activeImageView.animate().alpha(1f).setDuration(300).start(); // Fade-in new image
+                    activeImageView.setAlpha(0f);
+                    activeImageView.animate().alpha(1f).setDuration(300).start();
 
                     if (previouslyActiveImageView != null && previouslyActiveImageView != activeImageView) {
-                        // Fade out the old image, then set to GONE
                         previouslyActiveImageView.animate().alpha(0f).setDuration(300).withEndAction(() -> {
-                            if (previouslyActiveImageView != activeImageView) { // Double check it's not the current active one
+                            if (previouslyActiveImageView != activeImageView) {
                                 previouslyActiveImageView.setVisibility(View.GONE);
                             }
                         }).start();
                     } else if (previouslyActiveImageView == activeImageView && imageView1 != null && imageView2 != null) {
-                        // This case occurs if it's the first image load or manual click directly into activeImageView
-                        // Ensure the other one is GONE
                         ImageView otherImageView = (activeImageView == imageView1) ? imageView2 : imageView1;
                         otherImageView.setVisibility(View.GONE);
                         otherImageView.setAlpha(0f);
                     }
-
 
                     if (isForAutoPlayTimer && isAutoPlaying) {
                         Log.d(TAG, "AutoPlay: Image resource ready, starting " + autoPlayImageDisplayDurationMs + "ms timer for " + finalUrl);
@@ -674,7 +763,6 @@ public class HomeFragment extends Fragment {
                             mainThreadHandler.postDelayed(autoPlayImageRunnable, autoPlayImageDisplayDurationMs);
                         }
                     }
-                    // --- MODIFICATION END ---
                 }
                 return false;
             }
@@ -739,6 +827,7 @@ public class HomeFragment extends Fragment {
         }
     }
 
+    // enterFullscreen 和 exitFullscreen 方法保持您提供的版本
     private void enterFullscreen() {
         if (isFullscreen) return;
         Activity activity = getActivity();
@@ -771,13 +860,12 @@ public class HomeFragment extends Fragment {
 
         if (bottomContainer != null) {
             Log.d(TAG, "exitFullscreen: Applying user's specified non-fullscreen constraints.");
+            // 确保使用您原来代码中的这部分逻辑，而不是我之前修改的 originalBottomContainerLayoutParams
             ConstraintLayout.LayoutParams lp = (ConstraintLayout.LayoutParams) bottomContainer.getLayoutParams();
-
-            lp.topToTop = R.id.guideline_half;
+            lp.topToTop = R.id.guideline_half; // 确保此 ID 在您的布局中有效
             lp.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID;
             lp.width = ConstraintLayout.LayoutParams.MATCH_CONSTRAINT;
             lp.height = ConstraintLayout.LayoutParams.MATCH_CONSTRAINT;
-
             bottomContainer.setLayoutParams(lp);
             bottomContainer.requestLayout();
         }
@@ -810,7 +898,6 @@ public class HomeFragment extends Fragment {
             }
         }
 
-
         if (exoPlayer != null) {
             if (exoPlayerListener != null) {
                 exoPlayer.removeListener(exoPlayerListener);
@@ -824,11 +911,9 @@ public class HomeFragment extends Fragment {
         }
 
         playerView = null;
-        // --- MODIFICATION START: Nullify both ImageViews ---
         imageView1 = null;
         imageView2 = null;
         activeImageView = null;
-        // --- MODIFICATION END ---
         recyclerView = null;
         btnLogin = null;
         btnRoot = null;
@@ -842,8 +927,6 @@ public class HomeFragment extends Fragment {
         topContainer = null;
         bottomContainer = null;
         originalBottomContainerLayoutParams = null;
-        //   downloadProgressBar = null;
-        //   downloadProgressText = null;
     }
 
     @Override
@@ -855,40 +938,41 @@ public class HomeFragment extends Fragment {
         }
     }
 
+    // 5. 修改 checkStoragePermissionAndDownloadApk 以使用新的 launcher
     private void checkStoragePermissionAndDownloadApk(String url, String fileName) {
-        this.pendingApkUrl = url;
+        this.pendingApkUrl = url; // 保存 url 和 fileName，因为权限请求是异步的
         this.pendingApkFileName = fileName;
 
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
             if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.WRITE_EXTERNAL_STORAGE)
                     != PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},
-                        REQUEST_STORAGE_PERMISSION_FOR_APK);
+                // 使用新的启动器请求权限
+                requestPermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE);
             } else {
+                // 权限已授予，直接下载
                 proceedWithApkDownload(pendingApkUrl, pendingApkFileName);
+                // 清理 pending 变量
+                this.pendingApkUrl = null;
+                this.pendingApkFileName = null;
             }
         } else {
+            // 对于 Android Q (API 29) 及更高版本
             proceedWithApkDownload(pendingApkUrl, pendingApkFileName);
+            // 清理 pending 变量
+            this.pendingApkUrl = null;
+            this.pendingApkFileName = null;
         }
     }
 
     private void proceedWithApkDownload(String url, String fileName) {
         if (!isAdded() || getActivity() == null) {
             Log.w(TAG, "proceedWithApkDownload: Fragment not added or activity is null.");
-//            if (downloadProgressBar != null) downloadProgressBar.setVisibility(View.GONE);
-//            if (downloadProgressText != null) downloadProgressText.setVisibility(View.GONE);
             appendLog("proceedWithApkDownload: Fragment not added or activity is null.");
             return;
         }
 
         if (apkDownloader != null) {
-//            if (downloadProgressBar != null) downloadProgressBar.setVisibility(View.VISIBLE);
-//            if (downloadProgressText != null) {
-//                downloadProgressText.setText("准备下载...");
-//                downloadProgressText.setVisibility(View.VISIBLE);
-//            }
-            appendLog("准备下载...");
-
+            appendLog("准备下载..."); // 保留您原有的 appendLog
             apkDownloader.downloadAndInstallApk(url, fileName, getActivity(), new ApkDownloader.Callback() {
                 @Override
                 public void onSuccess(File apkFile) {
@@ -896,11 +980,6 @@ public class HomeFragment extends Fragment {
                     if (isAdded()) {
                         Toast.makeText(requireContext(), "APK 下载成功，准备安装", Toast.LENGTH_SHORT).show();
                         appendLog("APK 下载成功，准备安装");
-//                        if (downloadProgressBar != null)
-//                            downloadProgressBar.setVisibility(View.GONE);
-//                        if (downloadProgressText != null) {
-//                            downloadProgressText.setVisibility(View.GONE);
-//                        }
                     }
                 }
 
@@ -909,11 +988,6 @@ public class HomeFragment extends Fragment {
                     Log.e(TAG, "APK Download Failed: " + errorMessage);
                     if (isAdded()) {
                         Toast.makeText(requireContext(), "下载失败: " + errorMessage, Toast.LENGTH_LONG).show();
-//                        if (downloadProgressBar != null)
-//                            downloadProgressBar.setVisibility(View.GONE);
-//                        if (downloadProgressText != null) {
-//                            downloadProgressText.setText("下载失败");
-//                        }
                         appendLog("下载失败");
                     }
                 }
@@ -922,18 +996,7 @@ public class HomeFragment extends Fragment {
                 public void onProgress(int progressPercentage) {
                     Log.d(TAG, "APK Download Progress: " + progressPercentage + "%");
                     if (isAdded()) {
-//                        if (downloadProgressBar != null) {
-//                            if (downloadProgressBar.getVisibility() != View.VISIBLE)
-//                                downloadProgressBar.setVisibility(View.VISIBLE);
-//                            downloadProgressBar.setProgress(progressPercentage);
-//                        }
-//                        if (downloadProgressText != null) {
-//                            if (downloadProgressText.getVisibility() != View.VISIBLE)
-//                                downloadProgressText.setVisibility(View.VISIBLE);
-//                            downloadProgressText.setText("下载中... " + progressPercentage + "%");
-//                        }
                         appendLog("下载中... " + progressPercentage + "%");
-
                     }
                 }
             });
@@ -942,41 +1005,16 @@ public class HomeFragment extends Fragment {
             if (isAdded() && getContext() != null) {
                 Toast.makeText(getContext(), "下载器服务未准备好", Toast.LENGTH_SHORT).show();
             }
-//            if (downloadProgressBar != null) downloadProgressBar.setVisibility(View.GONE);
-//            if (downloadProgressText != null) downloadProgressText.setVisibility(View.GONE);
             appendLog("下载器服务未准备好");
         }
     }
 
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQUEST_STORAGE_PERMISSION_FOR_APK) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                if (isAdded() && getContext() != null) {
-                    Toast.makeText(getContext(), "存储权限已授予，开始下载...", Toast.LENGTH_SHORT).show();
-                }
-                if (pendingApkUrl != null && pendingApkFileName != null) {
-                    proceedWithApkDownload(pendingApkUrl, pendingApkFileName);
-                } else {
-                    Log.w(TAG, "权限授予后，待下载的APK信息丢失");
-                    if (isAdded() && getContext() != null) {
-                        Toast.makeText(getContext(), "无法继续下载，信息丢失", Toast.LENGTH_SHORT).show();
-                    }
-                }
-            } else {
-                if (isAdded() && getContext() != null) {
-                    Toast.makeText(getContext(), "存储权限被拒绝，无法下载APK", Toast.LENGTH_LONG).show();
-                }
-//                if (downloadProgressBar != null) downloadProgressBar.setVisibility(View.GONE);
-//                if (downloadProgressText != null) {
-//                    downloadProgressText.setText("权限被拒绝");
-//                }
-                appendLog("权限被拒绝");
-            }
-            pendingApkUrl = null;
-            pendingApkFileName = null;
-        }
-    }
+    // 6. 移除已弃用的 onRequestPermissionsResult 方法
+    // @Override
+    // public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+    //     super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+    //     if (requestCode == REQUEST_STORAGE_PERMISSION_FOR_APK) {
+    //         // ... (原有逻辑已移至 requestPermissionLauncher 的回调中)
+    //     }
+    // }
 }
