@@ -60,16 +60,17 @@ import java.util.List;
 public class HomeFragment extends Fragment {
 
     private static final String TAG = "MP_PLAYBACK";
+    // --- 修改开始: 为状态保存添加Key ---
+    private static final String KEY_CURRENT_DIR_ID = "currentDirId";
+    // --- 修改结束 ---
 
     private final CloudMediaService mediaService = new OneDriveMediaService();
     private DefaultTrackSelector trackSelector;
     private ExoPlayer exoPlayer;
     private PlayerView playerView;
-    /* --- MODIFICATION START: ImageView changes for double buffering --- */
     private ImageView imageView1;
     private ImageView imageView2;
     private ImageView activeImageView;
-    /* --- MODIFICATION END --- */
     private RecyclerView recyclerView;
     private Button btnLogin, btnRoot, btnGo;
     private boolean isFullscreen = false;
@@ -90,9 +91,8 @@ public class HomeFragment extends Fragment {
     private String pendingApkFileName;
 
     private Handler mainThreadHandler;
-    private long autoPlayImageDisplayDurationMs = 5000L;
+    private long autoPlayImageDisplayDurationMs = 10000L;
 
-    /* 3. 声明 ActivityResultLauncher */
     private ActivityResultLauncher<String> requestPermissionLauncher;
 
 
@@ -103,20 +103,25 @@ public class HomeFragment extends Fragment {
         mainThreadHandler = new Handler(Looper.getMainLooper());
     }
 
-    /* 4. 在 onCreate 中初始化 requestPermissionLauncher */
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
         FLog.init(requireContext().getApplicationContext());
 
+        // --- 修改开始: 恢复因系统回收而可能丢失的currentDirId ---
+        if (savedInstanceState != null) {
+            currentDirId = savedInstanceState.getString(KEY_CURRENT_DIR_ID);
+            FLog.d(TAG, "Restored currentDirId from savedInstanceState: " + currentDirId);
+        }
+        // --- 修改结束 ---
 
+        //这是一个存储权限申请的注册，不用管
         requestPermissionLauncher = registerForActivityResult(
                 new ActivityResultContracts.RequestPermission(),
                 isGranted -> {
                     if (isGranted) {
                         if (isAdded() && getContext() != null) {
-                            Toast.makeText(getContext(), "存储权限已授予，开始下载...", Toast.LENGTH_SHORT).show();
+                            Toast.makeText(getContext(), "存储权限已授予", Toast.LENGTH_SHORT).show();
                         }
                         if (pendingApkUrl != null && pendingApkFileName != null) {
                             proceedWithApkDownload(pendingApkUrl, pendingApkFileName);
@@ -132,12 +137,18 @@ public class HomeFragment extends Fragment {
                         }
                         FLog.w(TAG, "权限被拒绝");
                     }
-                    /* 清理临时变量，与您原来 onRequestPermissionsResult 中的逻辑保持一致 */
                     pendingApkUrl = null;
                     pendingApkFileName = null;
                 });
     }
 
+    // --- 修改开始: 实现状态保存 ---
+    @Override
+    public void onSaveInstanceState(@NonNull Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putString(KEY_CURRENT_DIR_ID, currentDirId);
+    }
+    // --- 修改结束 ---
 
     @Nullable
     @Override
@@ -186,7 +197,6 @@ public class HomeFragment extends Fragment {
         btnRoot = view.findViewById(R.id.btnRoot);
         btnGo = view.findViewById(R.id.btnGo);
         recyclerView = view.findViewById(R.id.recyclerView);
-        /* --- MODIFICATION START: Initialize both ImageViews --- */
         imageView1 = view.findViewById(R.id.imageView1);
         imageView2 = view.findViewById(R.id.imageView2);
 
@@ -198,7 +208,6 @@ public class HomeFragment extends Fragment {
             imageView1.setVisibility(View.VISIBLE);
             imageView2.setVisibility(View.GONE);
         }
-        /* --- MODIFICATION END --- */
         playerView = view.findViewById(R.id.player_view);
         topContainer = view.findViewById(R.id.top_container);
         bottomContainer = view.findViewById(R.id.bottom_container);
@@ -224,6 +233,9 @@ public class HomeFragment extends Fragment {
             public void onPlaybackStateChanged(int playbackState) {
                 if (playbackState == Player.STATE_ENDED && isAutoPlaying) {
                     FLog.d(TAG, "AutoPlay: Video ended, trying next file.");
+                    if (playerView != null) {
+                        playerView.setVisibility(View.GONE);
+                    }
                     handleAutoPlayNextFile();
                 }
             }
@@ -268,19 +280,15 @@ public class HomeFragment extends Fragment {
                 case IMAGE:
                     if (exoPlayer != null && exoPlayer.isPlaying()) exoPlayer.pause();
                     playerView.setVisibility(View.GONE);
-                    /* --- MODIFICATION START: Manual image click uses double buffering too --- */
                     ImageView targetManualImageView = (activeImageView == imageView1) ? imageView2 : imageView1;
                     if (autoPlayImageRunnable != null && mainThreadHandler != null) {
                         mainThreadHandler.removeCallbacks(autoPlayImageRunnable);
                     }
                     loadImage(url, true, false, targetManualImageView);
-                    /* --- MODIFICATION END --- */
                     break;
                 case VIDEO:
-                    /* --- MODIFICATION START: Ensure ImageViews are hidden when video plays --- */
                     if (imageView1 != null) imageView1.setVisibility(View.GONE);
                     if (imageView2 != null) imageView2.setVisibility(View.GONE);
-                    /* --- MODIFICATION END --- */
                     playerView.setVisibility(View.VISIBLE);
                     if (exoPlayer != null) {
                         exoPlayer.stop();
@@ -319,13 +327,7 @@ public class HomeFragment extends Fragment {
             currentDirId = null;
             refreshDirectory();
         });
-/*
-currentDirId用于记录用户当前所在的网盘目录，其中，如果是根目录，则currentDirId=null。currentDirId在三处会发生变动，
-登录网盘时，currentDirId=null，代表在根目录；点击回到根目录按钮时，currentDirId=null；以及用户点击recyclerView里面的item，
-类型是目录时，将其设置为被点击的目录，且根据该子目录刷新recyclerView的内容。然后，当自动播放时，应该从currentDirId开始播放，
-先播放currentDirId的所有文件，然后将其子目录全部入栈，逐一遍历和播放子目录。当栈为空时，代表完成了所有currentDirId下子目录的播放，
-那么我们应该重新开始播放。
- */
+
         btnGo.setOnClickListener(v -> {
 
             RecyclerView.Adapter<?> adapterLocal = recyclerView.getAdapter();
@@ -370,10 +372,8 @@ currentDirId用于记录用户当前所在的网盘目录，其中，如果是�
             }
         };
         playerView.setOnClickListener(mediaViewClickListener);
-        /* --- MODIFICATION START: Attach click listener to both ImageViews --- */
         if (imageView1 != null) imageView1.setOnClickListener(mediaViewClickListener);
         if (imageView2 != null) imageView2.setOnClickListener(mediaViewClickListener);
-        /* --- MODIFICATION END --- */
     }
 
     private void startAutoPlay() {
@@ -384,8 +384,6 @@ currentDirId用于记录用户当前所在的网盘目录，其中，如果是�
 
         String dirIdToPlay;
         if (autoPlayStack.isEmpty()) {
-            /* 栈为空，意味着当前播放范围的遍历已完成一轮，或者首次从根目录启动。
-             * 使用 this.currentDirId (Fragment 成员变量，代表用户启动播放时的目录) 作为播放/重新播放的起点。 */
             dirIdToPlay = this.currentDirId;
             FLog.d(TAG, "AutoPlay: Stack empty. Starting/Restarting playback from scope: " + (dirIdToPlay == null ? "ROOT" : dirIdToPlay));
         } else {
@@ -404,22 +402,18 @@ currentDirId用于记录用户当前所在的网盘目录，其中，如果是�
         FLog.d(TAG, "AutoPlay: Listing media for dirId: " + (dirIdToPlay == null ? "ROOT" : dirIdToPlay));
         mediaService.listMedia(dirIdToPlay)
                 .observe(getViewLifecycleOwner(), items -> {
-                    /* 再次检查状态，因为这是异步回调 */
                     if (!isAutoPlaying || !isAdded()) {
                         FLog.d(TAG, "AutoPlay: listMedia observed, but state changed. isAutoPlaying=" + isAutoPlaying + ", isAdded=" + isAdded());
                         return;
                     }
                     if (items == null) {
                         FLog.w(TAG, "AutoPlay: listMedia returned null items for dirId: " + (dirIdToPlay == null ? "ROOT" : dirIdToPlay) + ". Attempting next from stack or restarting scope.");
-                        /* 如果获取列表失败，直接尝试处理栈中下一个或重新开始当前范围 */
                         if (mainThreadHandler != null) {
                             mainThreadHandler.post(this::startAutoPlay);
                         }
                         return;
                     }
 
-                    /* 当 items 不为 null，但在一个循环的开始，如果 dirIdToPlay (即 this.currentDirId) 本身就是空的，
-                     * 并且 items 也为空（例如整个网盘是空的），我们需要一个终止条件。 */
                     if (dirIdToPlay == null && items.isEmpty() && autoPlayStack.isEmpty()) {
                         FLog.i(TAG, "AutoPlay: Root directory is empty and stack is empty. No content to play.");
                         if (isAdded() && getContext() != null) {
@@ -437,7 +431,13 @@ currentDirId用于记录用户当前所在的网盘目录，其中，如果是�
 
                         for (CloudMediaItem it : items) {
                             if (it.getType() == CloudMediaItem.MediaType.FOLDER) {
-                                localChildDirs.add(it.getId());
+                                // --- 修改开始: 增加null检查，防止将null的ID加入列表 ---
+                                if (it.getId() != null) {
+                                    localChildDirs.add(it.getId());
+                                } else {
+                                    FLog.w(TAG, "A folder item was returned with a null ID. Skipping.");
+                                }
+                                // --- 修改结束 ---
                             } else if (it.getType() == CloudMediaItem.MediaType.IMAGE || it.getType() == CloudMediaItem.MediaType.VIDEO) {
                                 localFilesToPlay.add(it);
                             }
@@ -448,27 +448,12 @@ currentDirId用于记录用户当前所在的网盘目录，其中，如果是�
                                 if (!isAutoPlaying || !isAdded()) {
                                     return;
                                 }
-                                /* 将子目录反向压入栈，以实现期望的遍历顺序 */
                                 for (int i = localChildDirs.size() - 1; i >= 0; i--) {
                                     autoPlayStack.push(localChildDirs.get(i));
                                 }
                                 FLog.d(TAG, "AutoPlay: Pushed " + localChildDirs.size() + " child dirs. Stack size now: " + autoPlayStack.size());
 
-                                /* 检查在处理完当前目录后是否应该结束整个自动播放
-                                 * （例如，当前目录没文件，子目录也处理完了，栈也空了） */
                                 if (localFilesToPlay.isEmpty() && autoPlayStack.isEmpty()) {
-                                    /* 这种情况意味着 dirIdToPlay (可能是 this.currentDirId) 没有可播放文件，
-                                     * 也没有子目录被加入栈（或者子目录处理完了栈又空了）。
-                                     * 这实际上是一个循环点，或者如果 this.currentDirId 本身就没有内容，
-                                     * 那么就是整个范围都没有内容。
-                                     * startAutoPlay 下次被调用时，会因为栈空而重新使用 this.currentDirId。
-                                     * 如果 this.currentDirId 本身就是个空目录且无子目录，会无限循环尝试播放它。
-                                     * 所以，如果 localFilesToPlay 为空，并且处理完子目录后 autoPlayStack 也为空，
-                                     * 并且 dirIdToPlay 就是 this.currentDirId（意味着我们刚开始一个循环或初始扫描根范围）
-                                     * 且这个 this.currentDirId 确实没有内容，那么就应该停止。 */
-
-                                    /* 上面已经有对 items.isEmpty() && autoPlayStack.isEmpty() 的判断，
-                                     * 这里的逻辑是确保 playFilesSequentially 被正确调用或跳过。 */
                                     if (this.currentDirId == dirIdToPlay && items.isEmpty() && localChildDirs.isEmpty()) {
                                         FLog.i(TAG, "AutoPlay: Scope root " + (dirIdToPlay == null ? "ROOT" : dirIdToPlay) + " is empty (no files, no subdirs). Stopping.");
                                         if (isAdded() && getContext() != null) {
@@ -579,24 +564,17 @@ currentDirId用于记录用户当前所在的网盘目录，其中，如果是�
             mainThreadHandler.removeCallbacks(autoPlayImageRunnable);
         }
 
-        preloadNextAutoPlayImageIfApplicable();
+        preloadNextImage();
 
         if (item.getType() == CloudMediaItem.MediaType.IMAGE) {
             playerView.setVisibility(View.GONE);
-            /* --- MODIFICATION START: Determine target ImageView for buffering --- */
             ImageView targetImageView = (activeImageView == imageView1) ? imageView2 : imageView1;
             FLog.d(TAG, "AutoPlay: Loading image into " + (targetImageView == imageView1 ? "imageView1" : "imageView2"));
-            /* Ensure the target (back) image view is ready to receive image, but might be GONE initially
-             * Glide will handle making it visible in onResourceReady if it loads successfully.
-             * The activeImageView remains visible with the old image. */
             loadImage(url, false, true, targetImageView);
-            /* --- MODIFICATION END --- */
 
         } else if (item.getType() == CloudMediaItem.MediaType.VIDEO) {
-            /* --- MODIFICATION START: Hide both ImageViews when video plays --- */
             if (imageView1 != null) imageView1.setVisibility(View.GONE);
             if (imageView2 != null) imageView2.setVisibility(View.GONE);
-            /* --- MODIFICATION END --- */
             if (playerView != null) playerView.setVisibility(View.VISIBLE);
             if (exoPlayer != null) {
                 exoPlayer.stop();
@@ -611,26 +589,27 @@ currentDirId用于记录用户当前所在的网盘目录，其中，如果是�
         }
     }
 
-    private void preloadNextAutoPlayImageIfApplicable() {
+    private void preloadNextImage() {
         if (!isAutoPlaying || !isAdded() || currentAutoPlayFiles == null || currentAutoPlayFiles.isEmpty()) {
             return;
         }
 
-        int preloadNextIndex = currentAutoPlayIndex + 1;
-        if (preloadNextIndex < currentAutoPlayFiles.size()) {
-            CloudMediaItem nextItem = currentAutoPlayFiles.get(preloadNextIndex);
+        for (int i = currentAutoPlayIndex + 1; i < currentAutoPlayFiles.size(); i++) {
+            CloudMediaItem nextItem = currentAutoPlayFiles.get(i);
             if (nextItem.getType() == CloudMediaItem.MediaType.IMAGE) {
                 Context safeContext = getContext();
                 if (safeContext == null) return;
-                FLog.d(TAG, "AutoPlay: Preloading next image: " + nextItem.getName());
+
+                FLog.d(TAG, "AutoPlay: Preloading next image found at index " + i + ": " + nextItem.getName());
                 Glide.with(safeContext)
                         .load(prepareMediaUrl(nextItem.getUrl()))
                         .diskCacheStrategy(DiskCacheStrategy.AUTOMATIC)
                         .preload();
+                return;
             }
         }
+        FLog.d(TAG, "AutoPlay: No subsequent image found to preload in the current directory list.");
     }
-
 
     private void stopAutoPlay() {
         FLog.i(TAG, "AutoPlay: Stopping auto-play sequence.");
@@ -651,7 +630,6 @@ currentDirId用于记录用户当前所在的网盘目录，其中，如果是�
         currentAutoPlayOnAllDone = null;
     }
 
-    /* loadImage 方法保持您提供的版本，不进行任何改动 */
     private void loadImage(String url, boolean loadForPotentialFullscreen, final boolean isForAutoPlayTimer, final ImageView targetImageView) {
         if (!isAdded() || getContext() == null || targetImageView == null) {
             FLog.w(TAG, "loadImage: Fragment not ready, ImageView is null, or targetImageView is null.");
@@ -662,9 +640,6 @@ currentDirId用于记录用户当前所在的网盘目录，其中，如果是�
             return;
         }
         final String finalUrl = prepareMediaUrl(url);
-
-        /* This might be redundant if playFileAtIndex always cancels, but good as a safeguard. */
-        /* mainThreadHandler.removeCallbacks(autoPlayImageRunnable); */
 
         RequestListener<Drawable> glideListener = new RequestListener<Drawable>() {
             @Override
@@ -731,8 +706,6 @@ currentDirId用于记录用户当前所在的网盘目录，其中，如果是�
             }
         };
 
-        /* Determine which Glide call to use based on whether it's a manual click (loadForPotentialFullscreen)
-         * or an auto-play background load. */
         if (loadForPotentialFullscreen && !isForAutoPlayTimer) {
             DisplayMetrics displayMetrics = new DisplayMetrics();
             Activity activity = getActivity();
@@ -759,7 +732,6 @@ currentDirId用于记录用户当前所在的网盘目录，其中，如果是�
             }
         } else {
             FLog.d(TAG, "Glide: Loading image for AUTO-PLAY path.");
-            /* 假设自动播放主要在全屏时，或者根据需要调整条件 */
             if (getActivity() != null && isFullscreen) {
                 DisplayMetrics displayMetrics = new DisplayMetrics();
                 getActivity().getWindowManager().getDefaultDisplay().getMetrics(displayMetrics);
@@ -789,7 +761,7 @@ currentDirId用于记录用户当前所在的网盘目录，其中，如果是�
         }
     }
 
-    /* enterFullscreen 和 exitFullscreen 方法保持您提供的版本 */
+
     private void enterFullscreen() {
         if (isFullscreen) return;
         Activity activity = getActivity();
@@ -822,7 +794,6 @@ currentDirId用于记录用户当前所在的网盘目录，其中，如果是�
 
         if (bottomContainer != null) {
             FLog.d(TAG, "exitFullscreen: Applying user's specified non-fullscreen constraints.");
-            /* 确保使用您原来代码中的这部分逻辑，而不是我之前修改的 originalBottomContainerLayoutParams */
             ConstraintLayout.LayoutParams lp = (ConstraintLayout.LayoutParams) bottomContainer.getLayoutParams();
             lp.topToTop = R.id.guideline_half;
             lp.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID;
@@ -900,28 +871,21 @@ currentDirId用于记录用户当前所在的网盘目录，其中，如果是�
         }
     }
 
-    /* 5. 修改 checkStoragePermissionAndDownloadApk 以使用新的 launcher */
     private void checkStoragePermissionAndDownloadApk(String url, String fileName) {
-        /* 保存 url 和 fileName，因为权限请求是异步的 */
         this.pendingApkUrl = url;
         this.pendingApkFileName = fileName;
 
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
             if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.WRITE_EXTERNAL_STORAGE)
                     != PackageManager.PERMISSION_GRANTED) {
-                /* 使用新的启动器请求权限 */
                 requestPermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE);
             } else {
-                /* 权限已授予，直接下载 */
                 proceedWithApkDownload(pendingApkUrl, pendingApkFileName);
-                /* 清理 pending 变量 */
                 this.pendingApkUrl = null;
                 this.pendingApkFileName = null;
             }
         } else {
-            /* 对于 Android Q (API 29) 及更高版本 */
             proceedWithApkDownload(pendingApkUrl, pendingApkFileName);
-            /* 清理 pending 变量 */
             this.pendingApkUrl = null;
             this.pendingApkFileName = null;
         }
@@ -971,6 +935,4 @@ currentDirId用于记录用户当前所在的网盘目录，其中，如果是�
             FLog.w(TAG, "下载器服务未准备好");
         }
     }
-
-    /* 6. 移除已弃用的 onRequestPermissionsResult 方法 */
 }

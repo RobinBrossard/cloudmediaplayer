@@ -1,4 +1,4 @@
-package com.robinsoft.cloudmediaplayer.cloud; // 请替换为你的实际包名
+package com.robinsoft.cloudmediaplayer.cloud;
 
 import android.app.Activity;
 import android.content.Context;
